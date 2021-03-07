@@ -1,0 +1,143 @@
+#!/bin/bash
+
+DEFAULT_TAIL_SIZE=$[1024*1024*1024] # 1M
+TMP_MOUNT_DIR=/tmp/imshrink.mnt.$(date +%s)
+
+hasExtendedPartition()
+{
+  local image="$1"
+  if (fdisk -l "$image" -o Type | grep "Extended") > /dev/null; then
+    echo true
+  fi
+
+  echo false
+}
+
+getLastPartitionOffset()
+{
+  local image="$1"
+  local offset=$(fdisk -l "$image" -o Start | tail -n 1)
+  echo $(trim "$offset")
+}
+
+getLastPartitionSize()
+{
+  local image="$1"
+  local size=$(fdisk --bytes -l -o Size --bytes "$image" | tail -n1)
+  echo $(trim "$size")
+}
+
+shrinkLastPartition()
+{
+  local image="$1"
+  local tailSize="$2"
+  if [ -z "$tailSize" ]; then 
+    tailSize=$DEFAULT_TAIL_SIZE; 
+  fi
+  
+  local sectorSize=$(getSectorSize "$image")
+  local offsetSectors=$(getLastPartitionOffset "$image")
+  local offsetBytes=$[$offsetSectors * $sectorSize]
+  
+  local loDevice=$(losetup -f)
+  
+  losetup -L -o $offsetBytes $loDevice "$image"
+  e2fsck -f $loDevice > /dev/null 2>&1
+  
+  local blockSize=$(getBlockSize $loDevice)
+  local minBlocks=$(estimateBlocksAfterShrink $loDevice)
+  local minBlocks=$[$minBlocks + $tailSize / $blockSize]
+  local newFsSize=$[$blockSize * $minBlocks]
+  local newEnd=$[$offsetBytes + $newFsSize]
+  
+  resize2fs $loDevice $minBlocks > /dev/null 2>&1 || echo "Error while resizing $loDevice to $minBlocks blocks"
+  losetup -d $loDevice
+
+  partNumber=$(getLastPartitionNumber "$image")
+  parted "$image" ---pretend-input-tty unit B resizepart $partNumber ${newEnd}B Yes > /dev/null 2>&1
+}
+
+fillWithZeros()
+{
+  local image="$1"
+  local sectorSize=$(getSectorSize "$image")
+  
+  local offsets=( $(getStartOffsets "$image") )
+  for offset in ${offsets[*]}
+  do
+    local offsetBytes=$[$sectorSize * $offset]
+    local loDevice=$(losetup -f)
+    losetup -L -o $offsetBytes $loDevice "$image"
+    mkdir -p $TMP_MOUNT_DIR
+    mount $loDevice $TMP_MOUNT_DIR
+    
+    pushd $TMP_MOUNT_DIR >/dev/null
+    local space=$(getAvailableSpace $TMP_MOUNT_DIR)
+    local zerosFile="$TMP_MOUNT_DIR/zeros.bin"
+    head -c $space /dev/zero > "$zerosFile"
+    sync
+    rm "$zerosFile"
+    popd >/dev/null
+    
+    umount "$TMP_MOUNT_DIR"
+    rmdir "$TMP_MOUNT_DIR"
+    losetup -d $loDevice
+    
+  done
+}
+
+getBlockCount()
+{
+  local device=$1
+  local value=$(dumpe2fs -h $device 2> /dev/null | grep 'Block count' | awk '{print $3}')
+  echo $(trim "$value")
+}
+
+getBlockSize()
+{
+  local device=$1
+  local value=$(dumpe2fs -h $device 2> /dev/null | grep 'Block size' | awk '{print $3}')
+  echo $(trim "$value")
+}
+
+getSectorSize()
+{
+  local device=$1
+  local value=$(fdisk -l "$image" | grep 'Sector size' | awk '{print $(NF-4)}')
+  echo $(trim "$value")
+}
+
+estimateBlocksAfterShrink()
+{
+  local device=$1
+  local value=$(resize2fs -P /dev/loop15 2>/dev/null | awk '{print $NF}')
+  echo $(trim "$value")
+}
+
+getLastPartitionNumber()
+{
+  local image="$1"
+  local value=$(parted --script "$image" print | grep "." | tail -1 | awk '{print $1}')
+  echo $value
+}
+
+getStartOffsets()
+{
+  local image="$1"
+  local value=$(fdisk -l -o Start,Type "$image" | grep Linux | awk '{print $1}')
+  echo $value
+}
+
+getAvailableSpace()
+{
+  local path="$1"
+  local value=$(df -P "$path" | awk 'NR==2 {print $4}')
+  echo $value
+}
+
+trim() {
+  local string="$*"
+  local string="${string#"${string%%[![:space:]]*}"}"
+  local string="${string%"${string##*[![:space:]]}"}"   
+  printf '%s' "$string"
+}
