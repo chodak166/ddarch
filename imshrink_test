@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #set -x
-#set -e
+set -e
 
 RED='\033[0;31m'
 GREEN='\033[1;32m'
@@ -11,7 +11,8 @@ NC='\033[0m' # No Color
 
 testTmpDir=./test.tmp.$(date +%s)
 testMntDir=/tmp/mnt.$(date +%s)
-testBinFile=$testTmpDir/testfile.bin
+testBinFilename=testfile.bin
+testBinFile=$testTmpDir/$testBinFilename
 testBinFileHash=
 
 baseImgSize=10M
@@ -27,6 +28,8 @@ main()
   setup
   runAllTests
   cleanUp
+  
+  echo "Done"
 }
 
 setup()
@@ -59,21 +62,23 @@ runAllTests()
   testLastPartitionSize
   testShrinkLastPartition
   testFillWithZeros
+  testMbrTruncate
+  testGptTruncate
 }
 
 testHasExtendedPartition()
 {
   result=$(hasExtendedPartition $imageMbrExtFile)
   assertEqual $result true \
-    "When the image contains an extended partition, then the hasExtendedPartition returns 0"
+    "When the image contains an extended partition, then the hasExtendedPartition returns true"
   
   result=$(hasExtendedPartition $imageMbrPriFile)
   assertEqual $result false \
-    "When the image does not contain an extended partition, then the hasExtendedPartition returns 1"
+    "When the image does not contain an extended partition, then the hasExtendedPartition returns false"
   
   result=$(hasExtendedPartition $imageGptPriFile)
   assertEqual $result false \
-    "When the image contains a GPT partition table, then the hasExtendedPartition returns 1"
+    "When the image contains a GPT partition table, then the hasExtendedPartition returns false"
 }
 
 testLastPartitionOffset()
@@ -141,6 +146,33 @@ testFillWithZeros()
   fillWithZeros $imageGptPriFile
 }
 
+testMbrTruncate()
+{
+  testTruncate $imageMbrPriFile
+}
+
+testGptTruncate()
+{
+  testTruncate $imageGptPriFile
+}
+
+testTruncate()
+{
+  image=$1
+  imgSizeBefore=$(stat --printf="%s" $image)
+  truncateImage $image 0
+  imgSizeAfter=$(stat --printf="%s" $image)
+  
+  assertGreater $imgSizeBefore $imgSizeAfter "The size of the image after truncation should be smaller than before"
+  
+  sectorSize=$(getSectorSize $image) 
+  mount -o offset=$[$p2StartOffset * $sectorSize] $image $testMntDir
+  mountedTestFileHash=$(md5sum $testMntDir/$testBinFilename | awk '{print $1}')
+  umount $testMntDir
+  
+  assertEqual $testBinFileHash $mountedTestFileHash "Original test file hash and the one from the image should be the same"
+}
+
 createMbrPriTestImage()
 {
   imgFile="$1"
@@ -159,7 +191,7 @@ createMbrExtTestImage()
   parted --script "$imgFile" mktable msdos
   parted -a optimal --script "$imgFile" mkpart primary ext4 1MiB 3MiB
   parted -a optimal --script "$imgFile" mkpart extended 3MiB 8MiB
-  parted -a optimal --script "$imgFile" mkpart logical ext4 3MiB 8MiB >/dev/null 2>&1
+  parted -a optimal --script "$imgFile" mkpart logical ext4 $[3*1024*1024+512]B 8MiB #>/dev/null 2>&1
 }
 
 createGptPriTestImage()
@@ -199,7 +231,7 @@ assertEqual()
   local lhs=$1
   local rhs=$2
   local msg=$3
-  if [[ "$lhs" -eq "$rhs" ]]; then
+  if [[ "$lhs" == "$rhs" ]]; then
       echo -e "$GREEN PASSED$NC ($msg)"
   else
       echo -e "$RED FAILED (\"$lhs\" is not \"$rhs\"): $msg$NC"
@@ -214,7 +246,7 @@ assertGreater()
   if [[ "$lhs" -gt "$rhs" ]]; then
       echo -e "$GREEN PASSED$NC ($msg)"
   else
-      echo -e "$RED FAILED (\"$lhs\" is not \"$rhs\"): $msg$NC"
+      echo -e "$RED FAILED (\"$lhs\" is not greater than \"$rhs\"): $msg$NC"
   fi
 }
 

@@ -1,16 +1,16 @@
 #!/bin/bash
 
-DEFAULT_TAIL_SIZE=$[1024*1024*1024] # 1M
+DEFAULT_TAIL_SIZE=$[1024*1024] # 1M
 TMP_MOUNT_DIR=/tmp/imshrink.mnt.$(date +%s)
 
 hasExtendedPartition()
 {
   local image="$1"
-  if (fdisk -l "$image" -o Type | grep "Extended") > /dev/null; then
+  if $(fdisk -l "$image" -o Type | grep -q 'LBA'); then
     echo true
+  else
+    echo false
   fi
-
-  echo false
 }
 
 getLastPartitionOffset()
@@ -42,7 +42,7 @@ shrinkLastPartition()
   local loDevice=$(losetup -f)
   
   losetup -L -o $offsetBytes $loDevice "$image"
-  e2fsck -f $loDevice > /dev/null 2>&1
+  e2fsck -f $loDevice > /dev/null 2>&1 ||:
   
   local blockSize=$(getBlockSize $loDevice)
   local minBlocks=$(estimateBlocksAfterShrink $loDevice)
@@ -84,6 +84,36 @@ fillWithZeros()
     losetup -d $loDevice
     
   done
+}
+
+truncateImage()
+{
+  local image="$1"
+  local tailSize="$2"
+  if [ -z "$tailSize" ]; then 
+    tailSize=$DEFAULT_TAIL_SIZE; 
+  fi
+  
+  local endSector=$(getEndSector "$image")
+  local sectorSize=$(getSectorSize "$image")
+  local isGpt=$(hasGptLayout "$image")
+  
+  if [ $isGpt = true ]; then
+    local offsets=( $(getStartOffsets "$image") )
+    local backupSize=$[$sectorSize * ${offsets[0]}]
+    local tailSize=$[$tailSize + $backupSize]
+  else
+    local tailSize=$[$tailSize + $sectorSize]
+  fi
+  
+
+  local trSize=$[$endSector * $sectorSize + $tailSize]
+
+  truncate --size $trSize "$image"
+  
+  if [ $isGpt = true ]; then
+    sgdisk -e "$image" >/dev/null 2>&1 ||:
+  fi
 }
 
 getBlockCount()
@@ -133,6 +163,23 @@ getAvailableSpace()
   local path="$1"
   local value=$(df -P "$path" | awk 'NR==2 {print $4}')
   echo $value
+}
+
+getEndSector()
+{
+  local image="$1"
+  local value=$(fdisk -o End -l "$image" | tail -1)
+  echo $(trim "$value")
+}
+
+hasGptLayout()
+{
+  local image="$1"
+  if $(fdisk -l "$image" | grep -q 'type: gpt'); then
+    echo true
+  else
+    echo false
+  fi
 }
 
 trim() {
