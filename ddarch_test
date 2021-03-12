@@ -123,7 +123,7 @@ testShrinkLastPartition()
     "The ${imageMbrPriFile}.img last partition size should be smaller after shrinking"
     
   cp -f "$imageBak" "$image"
-  tailSize=2048
+  tailSize=$[1024 * 32]
   shrinkLastPartition $image $tailSize
   sizeAfterWithTail=$(getLastPartitionSize $image)
   
