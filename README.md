@@ -1,3 +1,3 @@
-# imshrink
+# ddarch
 
-Disk image file truncate and compress helper script
+A simple helper script for archiving dd images

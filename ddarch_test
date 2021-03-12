@@ -7,7 +7,7 @@ RED='\033[0;31m'
 GREEN='\033[1;32m'
 NC='\033[0m' # No Color
 
-. imshrink
+. ddarch
 
 testTmpDir=./test.tmp.$(date +%s)
 testMntDir=/tmp/mnt.$(date +%s)
@@ -30,7 +30,7 @@ main()
 {
   setup
   runAllTests
-  #cleanUp
+  cleanUp
   
   echo "Done"
 }
