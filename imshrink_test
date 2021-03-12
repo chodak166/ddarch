@@ -19,6 +19,9 @@ baseImgSize=10M
 imageMbrPriFile=$testTmpDir/disk-10M-mbr-primary.img
 imageMbrExtFile=$testTmpDir/disk-10M-mbr-extended.img
 imageGptPriFile=$testTmpDir/disk-10M-gpt-primary.img
+restoredImageFile=$testTmpDir/restored-image.img
+
+restoredImageSize=60MiB
 
 p1StartOffset=2048
 p2StartOffset=6144
@@ -27,7 +30,7 @@ main()
 {
   setup
   runAllTests
-  cleanUp
+  #cleanUp
   
   echo "Done"
 }
@@ -64,6 +67,8 @@ runAllTests()
   testFillWithZeros
   testMbrTruncate
   testGptTruncate
+  testMbrRestore
+  testGptRestore
 }
 
 testHasExtendedPartition()
@@ -171,6 +176,31 @@ testTruncate()
   umount $testMntDir
   
   assertEqual $testBinFileHash $mountedTestFileHash "Original test file hash and the one from the image should be the same"
+}
+
+testMbrRestore()
+{
+  testRestore $imageMbrPriFile
+}
+
+testGptRestore()
+{
+  testRestore $imageGptPriFile
+}
+
+testRestore()
+{
+  srcImage=$1
+  head -c $restoredImageSize /dev/urandom > $restoredImageFile
+  
+  loDevice=$(losetup --show -f $restoredImageFile) && \
+  restoreImage $srcImage $loDevice
+  
+  losetup -d $loDevice
+  
+  size=$(getLastPartitionSize $restoredImageFile)
+  
+  assertEqual $size 58769408 "Restored partition size should be 58769408"
 }
 
 createMbrPriTestImage()

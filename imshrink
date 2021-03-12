@@ -116,6 +116,21 @@ truncateImage()
   fi
 }
 
+restoreImage()
+{
+  image="$1"
+  device=$2
+  dd if="$image" of=$device status=progress
+  
+  isGpt=$(hasGptLayout $device)
+  if [ $isGpt = true ]; then
+    sgdisk -e $device > /dev/null
+  fi
+  
+  lastPartitionNum=$(getLastPartitionNumber $device)
+  parted --script $device "resizepart $lastPartitionNum -1"
+}
+
 getBlockCount()
 {
   local device=$1
@@ -140,7 +155,7 @@ getSectorSize()
 estimateBlocksAfterShrink()
 {
   local device=$1
-  local value=$(resize2fs -P /dev/loop15 2>/dev/null | awk '{print $NF}')
+  local value=$(resize2fs -P $device 2>/dev/null | awk '{print $NF}')
   echo $(trim "$value")
 }
 
