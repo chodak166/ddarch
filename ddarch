@@ -54,7 +54,7 @@ shrinkLastPartition()
   losetup -d $loDevice
 
   partNumber=$(getLastPartitionNumber "$image")
-  parted "$image" ---pretend-input-tty unit B resizepart $partNumber ${newEnd}B Yes > /dev/null 2>&1
+  echo Yes | parted "$image" ---pretend-input-tty unit B resizepart $partNumber ${newEnd}B >/dev/null 2>&1 
 }
 
 fillWithZeros()
@@ -112,7 +112,7 @@ truncateImage()
   truncate --size $trSize "$image"
   
   if [ $isGpt = true ]; then
-    sgdisk -e "$image" >/dev/null 2>&1 ||:
+    sgdisk -e "$image" >/dev/null 2>&1
   fi
 }
 
@@ -124,7 +124,7 @@ restoreImage()
   
   isGpt=$(hasGptLayout $device)
   if [ $isGpt = true ]; then
-    sgdisk -e $device > /dev/null
+    sgdisk -e $device > /dev/null 2>&1
   fi
   
   lastPartitionNum=$(getLastPartitionNumber $device)
@@ -190,7 +190,7 @@ getEndSector()
 hasGptLayout()
 {
   local image="$1"
-  if $(fdisk -l "$image" | grep -q 'type: gpt'); then
+  if $(fdisk -l "$image" 2>/dev/null | grep -q 'type: gpt'); then
     echo true
   else
     echo false

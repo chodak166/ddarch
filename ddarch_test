@@ -32,7 +32,7 @@ main()
   runAllTests
   cleanUp
   
-  echo "Done"
+  echo -e "\n$GREEN "Done" $NC"
 }
 
 setup()
