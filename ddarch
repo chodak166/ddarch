@@ -1,7 +1,179 @@
 #!/bin/bash
+## $SCRIPT_NAME v$SCRIPT_VERSION
+##
+## A dd wrapper script with .img file archiving features.
+##
+## Usage: $SCRIPT_FILENAME [command] [options]
+##
+## Commands:
+##
+##
+## archive [default]                 shrink, truncate and compress image file; clone first if the input is a block device
+## Options:
+##   -i, --input [file]              input image file or block device
+##   -o, --output [file]             output file, defaults to 'image-<yyyy-mm-dd>.<ext>'
+##   -d, --dd-args [string]          additional dd arguments
+##   -a, --arch-type [string]        archive type: tgz, zip, 7z, none
+##   -n, --name [string]             replace "image" prefix of the output file with the given name
+##   --shrink-tail [bytes]           additional empty space left in the shrunk partition
+##   --truncate-tail [bytes]         additional empty space left in the truncated image
+##   --no-resize                     do not resize the last partition
+##   --no-truncate                   do not truncate the image
+##   --no-zero                       do not fill empty space with zeros
+##   --no-compress                   do not compress the image
+##
+##
+## restore                           copy the image to the device and extend the last partition; decompress first if the input is an archive
+## Options:
+##   -i, --input [file]              input .img file or an archive (tar.gz, tgz, zip, 7z)
+##   -o, --output [device]           target block device
+##   -d, --dd-args [string]          additional dd arguments
+##   --no-extend                     do not extend the last prtition to fit the target device size
+## 
+## 
+## Global options:
+##   -V, --verbose                  print the commands being executed and additional information
+##   -q, --quiet                    do not print any output
+##   -h, --help                     Display this message
+##   -v, --version                  Display script version
+##
+## 
+## Examples:
+## 
+## Create an archive from block device (clone, shrink, fill with zeroes, truncate, compress):
+## $SCRIPT_FILENAME --name myimage -i /dev/sdc
+##
+##
 
-DEFAULT_TAIL_SIZE=$[1024*1024] # 1M
-TMP_MOUNT_DIR=/tmp/imshrink.mnt.$(date +%s)
+#===========================================
+
+SCRIPT_NAME=ddarch
+SCRIPT_FILENAME=$(basename "$0")
+SCRIPT_VERSION=0.1.0
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+set -e          # exit on command errors (so you MUST handle exit codes properly!)
+set -o pipefail # capture fail exit codes in piped commands
+set -x         # execution tracing debug messages
+
+
+#todo: use as an argument
+TMP_MOUNT_DIR=/tmp/ddarch.mnt.$(date +%s)
+
+commandName=archive
+input=
+output=
+ddArgs=
+outputBaseName=image
+shrinkTailSize=$((1024 * 1024)) # 1M
+truncateTailSize=$((1024 * 1024)) # 1M
+archType=7z
+noResize=false
+noTruncate=false
+noZero=false
+noCompress=false
+noExtend=false
+quiet=false
+verbose=false
+
+#===========================================
+
+
+function usage {
+    [ "$*" ] && echo "$0: $*"
+    sed -n '/^##/,/^$/s/^## \{0,1\}//p' "$SCRIPT_DIR/$SCRIPT_FILENAME" |
+  sed "s/\$SCRIPT_NAME/$SCRIPT_NAME/g" |
+  sed "s/\$SCRIPT_FILENAME/$SCRIPT_FILENAME/g" |
+  sed "s/\$SCRIPT_VERSION/$SCRIPT_VERSION/g"
+    
+    exit 2
+} 2>/dev/null
+
+
+function main {
+    readCommandArg $1
+    readOptions "$@"
+    run
+}
+
+readCommandArg()
+{
+  arg=$1
+  firstChar=${arg:0:1}
+
+  if [ "$firstChar" != "-" ] && [ ! -z "$arg" ]; then
+    commandName=$arg
+    shift
+  fi
+}
+
+readOptions()
+{
+    if [ $# -eq 0 ]; then
+      usage;
+    fi
+    
+    while [ $# -gt 0 ]; do
+      case $1 in
+        ('-h'|'--help')
+          usage 2>&1;;
+        ('-v'|'--version')
+          echo "$SCRIPT_NAME v$SCRIPT_VERSION"
+          exit 0;;
+        ('-i'|'--input')
+          shift
+          input="$1";;
+        ('-o'|'--output')
+          shift
+          output="$1";;
+        ('-d'|'--dd-args')
+          shift
+          ddArgs="$1";;
+        ('-n'|'--name')
+          shift
+          outputBaseName="$1";;
+        ('--shrink-tail')
+          shift
+          shrinkTailSize="$1";;
+        ('--truncate-tail')
+          shift
+          truncateTailSize="$1";;
+        ('--no-resize')
+          noResize=true;;
+        ('--no-truncate')
+          noTruncate=true;;
+        ('--no-zero')
+          noZero=true;;
+        ('--no-compress')
+          noCompress=true;;
+        ('--no-extend')
+          noExtend=true;;
+        ('--quiet')
+          quiet=true;;
+        ('--verbose')
+          verbose=true;;
+        ('--')
+          shift
+          break;;
+        ('-'*)
+          echo -e "\n$0 $1: unknown option. Use --help to learn more.\n"
+          exit 3
+          break;;
+        (*)
+          break;;
+      esac
+
+      shift
+    done
+}
+
+#===========================================
+
+
+function run 
+{
+  :
+}
 
 hasExtendedPartition()
 {
@@ -32,7 +204,7 @@ shrinkLastPartition()
   local image="$1"
   local tailSize="$2"
   if [ -z "$tailSize" ]; then 
-    tailSize=$DEFAULT_TAIL_SIZE; 
+    tailSize=$shrinkTailSize; 
   fi
   
   local sectorSize=$(getSectorSize "$image")
@@ -91,7 +263,7 @@ truncateImage()
   local image="$1"
   local tailSize="$2"
   if [ -z "$tailSize" ]; then 
-    tailSize=$DEFAULT_TAIL_SIZE; 
+    tailSize=$truncateTailSize; 
   fi
   
   local endSector=$(getEndSector "$image")
@@ -203,3 +375,8 @@ trim() {
   local string="${string%"${string##*[![:space:]]}"}"   
   printf '%s' "$string"
 }
+
+
+#===========================================
+
+(return 0 2>/dev/null) || main "$@"
