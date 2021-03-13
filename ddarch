@@ -8,33 +8,36 @@
 ## Commands:
 ##
 ##
-## archive [default]                 shrink, truncate and compress image file; clone first if the input is a block device
+## archive [default]                shrink, truncate and compress image file; clone first if the input is a block device
 ## Options:
-##   -i, --input [file]              input image file or block device
-##   -o, --output [file]             output file, defaults to '<yyyy-mm-dd>-image.<ext>'
-##   -d, --dd-args [string]          additional dd arguments
-##   -a, --arch-type [string]        archive type: tgz, zip, 7z, none
-##   -n, --name [string]             replace "image" suffix of the output file name with the given name
-##   --shrink-tail [bytes]           additional empty space left in the shrunk partition
-##   --truncate-tail [bytes]         additional empty space left in the truncated image
-##   --no-resizepart                     do not resize the last partition
-##   --no-truncate                   do not truncate the image
-##   --no-zero                       do not fill empty space with zeros
-##   --in-place                      edit input file when it's an image (and remove after compression)
+##   -i, --input [file]             input image file or block device
+##   -o, --output [file]            output file, defaults to '<yyyy-mm-dd>-image.<ext>'
+##   -d, --dd-args [string]         additional dd arguments
+##   -a, --arch-type [string]       archive type: tgz, zip, 7z, none
+##   -n, --name [string]            replace "image" suffix of the output file name with the given name
+##   --shrink-tail [bytes]          additional empty space left in the shrunk partition
+##   --truncate-tail [bytes]        additional empty space left in the truncated image
+##   --no-resizepart                    do not resize the last partition
+##   --no-truncate                  do not truncate the image
+##   --no-zero                      do not fill empty space with zeros
+##   --in-place                     edit input file when it's an image (and remove after compression)
+##   --mnt-dir [dir]                temporary mount location; defaults to /tmp/ddarch.mnt.<timestamp>
 ##
 ##
-## restore                           copy the image to the device and extend the last partition; decompress first if the input is an archive
+## restore                          copy the image to the device and extend the last partition; decompress first if the input is an archive
 ## Options:
-##   -i, --input [file]              input .img file or an archive (tar.gz, tgz, zip, 7z)
-##   -o, --output [device]           target block device
-##   -d, --dd-args [string]          additional dd arguments
-##   --no-extend                     do not extend the last prtition to fit the target device size
+##   -i, --input [file]             input .img file or an archive (tar.gz, tgz, zip, 7z)
+##   -o, --output [device]          target block device
+##   -d, --dd-args [string]         additional dd arguments
+##   --no-extend                    do not extend the last prtition to fit the target device size
+##   --verify                       compare input file and device checksums
 ## 
-## 
+##
 ## Global options:
 ##   -V, --verbose                  print the commands being executed and additional information
 ##   -q, --quiet                    do not print any output
 ##   -y, --yes                      say yes to everything (non-interactive mode)
+##   --work-dir [dir]               working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
 ##   -h, --help                     Display this message
 ##   -v, --version                  Display script version
 ##
@@ -62,8 +65,8 @@ GREEN='\033[1;32m'
 NC='\033[0m' # No Color
 
 #todo: use as an argument
-TMP_WORK_DIR=/tmp/ddarch.$(date +%s)
-TMP_MOUNT_DIR=/tmp/ddarch.mnt.$(date +%s)
+tmpWorkDir=/tmp/ddarch.$(date +%s)
+tmpMountDir=/tmp/ddarch.mnt.$(date +%s)
 STDOUT=`readlink -f /proc/$$/fd/1`
 STDERR=`readlink -f /proc/$$/fd/2`
 
@@ -85,7 +88,10 @@ quiet=false
 verbose=false
 allYes=false
 inPlace=false
+verify=false
 
+loDevice=
+unarchivedOutput=
 #===========================================
 
 
@@ -105,7 +111,6 @@ main() {
     readCommandArg
     readOptions
     run
-    cleanup #TODO: trap
 }
 
 readCommandArg()
@@ -165,13 +170,21 @@ readOptions()
         noZero=true;;
       ('--no-extend')
         noExtend=true;;
+      ('--verify')
+        verify=true;;
       ('-q'|'--quiet')
         quiet=true;;
       ('--in-place')
         inPlace=true;;
       ('-y'|'--yes')
         allYes=true;;
-      ('--verbose')
+      ('--work-dir')
+        shift
+        tmpWorkDir="$1";;
+      ('--mount-dir')
+        shift
+        tmpMountDir="$1";;
+      ('-V'|'--verbose')
         verbose=true;;
       ('--')
         shift
@@ -193,24 +206,27 @@ readOptions()
 
 run() 
 {
+  trap cleanup EXIT
   if [ $quiet = true ]; then
     exec &>/dev/null
   fi
 
   assertInputExists
-  assertProperArchType
-  test -z "$output" && setupOutputName
-  assertNoOutputFile
   assertRoot
 
-  mkdir -p $TMP_WORK_DIR
-  mkdir -p $TMP_MOUNT_DIR  
+  mkdir -p $tmpWorkDir
+  mkdir -p $tmpMountDir  
   
   case $commandName in
     ('archive')
+      assertProperArchType
+      test -z "$output" && setupOutputName
+      assertNoOutputFile
       archiveImageOrDevice;;
+      
     ('restore')
       restoreArchiveOrImage;;
+      
     (*)
       elog "Unknown command: $commandName"
       exit 1
@@ -219,8 +235,16 @@ run()
 
 cleanup()
 {
-  test ! -z $TMP_WORK_DIR && rm -r $TMP_WORK_DIR
-  rmdir $TMP_MOUNT_DIR
+  if [ ! -z $loDevice ] && findmnt -rno SOURCE,TARGET $loDevice >/dev/null; then
+    losetup -d $loDevice
+  fi
+  
+  if findmnt -rno SOURCE,TARGET $tmpMountDir >/dev/null; then
+    umount -f $tmpMountDir
+  fi
+  
+  test -d $tmpWorkDir && rm -r $tmpWorkDir
+  test -d $tmpMountDir && rmdir $tmpMountDir
 }
 
 assertProperArchType()
@@ -252,6 +276,7 @@ assertNoOutputFile()
 setupOutputName() 
 {
   output="$PWD/"$(date +%Y-%m-%d)"-${outputBaseName}".img
+  unarchivedOutput="$output"
   
   case $archType in
     ('7z')
@@ -282,7 +307,7 @@ archiveImageOrDevice()
     
     local imageFile="$input"
   else
-    imageFile="$TMP_WORK_DIR/image.img"
+    imageFile="$tmpWorkDir"/$(basename "$unarchivedOutput")
     dd if="$input" of="$imageFile" status=progress $ddArgs
   fi
   
@@ -292,7 +317,34 @@ archiveImageOrDevice()
 restoreArchiveOrImage()
 {
   ilog "Rostoring image $input to $output"
-  vlog some verbose log
+  
+  restoreImage "$input" "$output"
+  
+#  if [ $noExtend = false ]; then
+#    
+#  fi
+  
+  if [ $verify = true ]; then
+    verifyPartitions $output
+  fi
+  
+}
+
+verifyPartitions() 
+{
+  offsets=( $(getStartOffsets $output) )
+  for offset in "${offsets[@]}"
+  do
+    sectorSize=$(getSectorSize $output)
+    local offsetBytes=$(($sectorSize * $offset))
+    loDevice=$(losetup --show -f --offset $offsetBytes $output)
+    if execCmd fsck -y $loDevice &>/dev/null; then
+      ilog "${GREEN}Partition verified${NC}"
+    else
+      elog "Partition starting at sector $offset cannot be positively verified"
+    fi
+    execCmd losetup -d $loDevice
+  done
 }
 
 archiveImageFile()
@@ -463,18 +515,18 @@ shrinkLastPartition()
   
   local sectorSize=$(getSectorSize "$image")
   local offsetSectors=$(getLastPartitionOffset "$image")
-  local offsetBytes=$[$offsetSectors * $sectorSize]
+  local offsetBytes=$(($offsetSectors * $sectorSize))
   
-  local loDevice=$(losetup -f)
+  loDevice=$(losetup -f)
  
   execCmd losetup -L -o $offsetBytes $loDevice "$image"
   execCmd e2fsck -y -f $loDevice
 
   local blockSize=$(getBlockSize $loDevice)
   local minBlocks=$(estimateBlocksAfterShrink $loDevice)
-  local minBlocks=$[$minBlocks + $tailSize / $blockSize]
-  local newFsSize=$[$blockSize * $minBlocks]
-  local newEnd=$[$offsetBytes + $newFsSize]
+  local minBlocks=$(($minBlocks + $tailSize / $blockSize))
+  local newFsSize=$(($blockSize * $minBlocks))
+  local newEnd=$(($offsetBytes + $newFsSize))
   
   execCmd resize2fs $loDevice $minBlocks #> /dev/null 2>&1 || echo "Error while resizing $loDevice to $minBlocks blocks"
   execCmd losetup -d $loDevice
@@ -492,20 +544,20 @@ fillWithZeros()
   local offsets=( $(getStartOffsets "$image") )
   for offset in ${offsets[*]}
   do
-    local offsetBytes=$[$sectorSize * $offset]
-    local loDevice=$(losetup -f)
+    local offsetBytes=$(($sectorSize * $offset))
+    loDevice=$(losetup -f)
     execCmd losetup -L -o $offsetBytes $loDevice "$image"
-    test -d $TMP_MOUNT_DIR || mkdir -p $TMP_MOUNT_DIR
+    test -d $tmpMountDir || mkdir -p $tmpMountDir
     
-    execCmd mount $loDevice $TMP_MOUNT_DIR
+    execCmd mount $loDevice $tmpMountDir
     
-    local space=$(getAvailableSpace $TMP_MOUNT_DIR)
-    local zerosFile="$TMP_MOUNT_DIR/zeros.bin"
+    local space=$(getAvailableSpace $tmpMountDir)
+    local zerosFile="$tmpMountDir/zeros.bin"
     execCmd head -c $space /dev/zero > "$zerosFile"
     execCmd sync
     rm "$zerosFile"
     
-    execCmd umount "$TMP_MOUNT_DIR"
+    execCmd umount "$tmpMountDir"
     execCmd losetup -d $loDevice
     
   done
@@ -525,14 +577,14 @@ truncateImage()
   
   if [ $isGpt = true ]; then
     local offsets=( $(getStartOffsets "$image") )
-    local backupSize=$[$sectorSize * ${offsets[0]}]
-    local tailSize=$[$tailSize + $backupSize]
+    local backupSize=$(($sectorSize * ${offsets[0]}))
+    local tailSize=$(($tailSize + $backupSize))
   else
-    local tailSize=$[$tailSize + $sectorSize]
+    local tailSize=$(($tailSize + $sectorSize))
   fi
   
 
-  local trSize=$[$endSector * $sectorSize + $tailSize]
+  local trSize=$(($endSector * $sectorSize + $tailSize))
 
   execCmd truncate --size $trSize "$image"
   

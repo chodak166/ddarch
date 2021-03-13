@@ -124,11 +124,11 @@ testShrinkLastPartition()
     "The ${imageMbrPriFile}.img last partition size should be smaller after shrinking"
     
   cp -f "$imageBak" "$image"
-  tailSize=$[1024 * 32]
+  tailSize=$((1024 * 32))
   shrinkLastPartition $image $tailSize
   sizeAfterWithTail=$(getLastPartitionSize $image)
   
-  delta=$[$sizeAfterWithTail - $sizeAfter]
+  delta=$(($sizeAfterWithTail - $sizeAfter))
   assertEqual $tailSize $delta \
     "The ${imageMbrPriFile}.img last partition size with tail should be accordingly bigger"
     
@@ -172,7 +172,7 @@ testTruncate()
   assertGreater $imgSizeBefore $imgSizeAfter "The size of the image after truncation should be smaller than before"
   
   sectorSize=$(getSectorSize $image) 
-  mount -o offset=$[$p2StartOffset * $sectorSize] $image $testMntDir
+  mount -o offset=$(($p2StartOffset * $sectorSize)) $image $testMntDir
   mountedTestFileHash=$(md5sum $testMntDir/$testBinFilename | awk '{print $1}')
   umount $testMntDir
   
@@ -222,7 +222,7 @@ createMbrExtTestImage()
   parted --script "$imgFile" mktable msdos
   parted -a optimal --script "$imgFile" mkpart primary ext4 1MiB 3MiB
   parted -a optimal --script "$imgFile" mkpart extended 3MiB 8MiB
-  parted -a optimal --script "$imgFile" mkpart logical ext4 $[3*1024*1024+512]B 8MiB #>/dev/null 2>&1
+  parted -a optimal --script "$imgFile" mkpart logical ext4 $((3*1024*1024+512))B 8MiB #>/dev/null 2>&1
 }
 
 createGptPriTestImage()
