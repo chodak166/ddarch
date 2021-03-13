@@ -333,12 +333,16 @@ restoreArchiveOrImage()
 verifyPartitions() 
 {
   offsets=( $(getStartOffsets $output) )
+  vlog "Offsets: ${offsets[*]}"
   for offset in "${offsets[@]}"
   do
+    vlog "Verifying partition at sector $offset"
+    
     sectorSize=$(getSectorSize $output)
     local offsetBytes=$(($sectorSize * $offset))
-    loDevice=$(losetup --show -f --offset $offsetBytes $output)
-    if execCmd fsck -y $loDevice &>/dev/null; then
+    loDevice=$(losetup -f)
+    execCmd losetup --offset $offsetBytes $loDevice $output
+    if fsck -t ext2,ext3,ext4,vfat,ntfs -y $loDevice; then
       ilog "${GREEN}Partition verified${NC}"
     else
       elog "Partition starting at sector $offset cannot be positively verified"
@@ -484,7 +488,7 @@ execCmd()
 hasExtendedPartition()
 {
   local image="$1"
-  if $(fdisk -l "$image" -o Type | grep -q 'LBA'); then
+  if $(fdisk -l "$image" -o Type | grep -q 'W95'); then
     echo true
   else
     echo false
@@ -542,7 +546,7 @@ fillWithZeros()
   local sectorSize=$(getSectorSize "$image")
   
   local offsets=( $(getStartOffsets "$image") )
-  for offset in ${offsets[*]}
+  for offset in "${offsets[@]}"
   do
     local offsetBytes=$(($sectorSize * $offset))
     loDevice=$(losetup -f)
