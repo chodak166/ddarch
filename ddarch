@@ -11,16 +11,16 @@
 ## archive [default]                 shrink, truncate and compress image file; clone first if the input is a block device
 ## Options:
 ##   -i, --input [file]              input image file or block device
-##   -o, --output [file]             output file, defaults to 'image-<yyyy-mm-dd>.<ext>'
+##   -o, --output [file]             output file, defaults to '<yyyy-mm-dd>-image.<ext>'
 ##   -d, --dd-args [string]          additional dd arguments
 ##   -a, --arch-type [string]        archive type: tgz, zip, 7z, none
-##   -n, --name [string]             replace "image" prefix of the output file with the given name
+##   -n, --name [string]             replace "image" suffix of the output file name with the given name
 ##   --shrink-tail [bytes]           additional empty space left in the shrunk partition
 ##   --truncate-tail [bytes]         additional empty space left in the truncated image
-##   --no-resize                     do not resize the last partition
+##   --no-resizepart                     do not resize the last partition
 ##   --no-truncate                   do not truncate the image
 ##   --no-zero                       do not fill empty space with zeros
-##   --no-compress                   do not compress the image
+##   --in-place                      edit input file when it's an image (and remove after compression)
 ##
 ##
 ## restore                           copy the image to the device and extend the last partition; decompress first if the input is an archive
@@ -34,6 +34,7 @@
 ## Global options:
 ##   -V, --verbose                  print the commands being executed and additional information
 ##   -q, --quiet                    do not print any output
+##   -y, --yes                      say yes to everything (non-interactive mode)
 ##   -h, --help                     Display this message
 ##   -v, --version                  Display script version
 ##
@@ -54,12 +55,17 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 set -e          # exit on command errors (so you MUST handle exit codes properly!)
 set -o pipefail # capture fail exit codes in piped commands
-set -x         # execution tracing debug messages
+#set -x         # execution tracing debug messages
 
+RED='\033[0;31m'
+GREEN='\033[1;32m'
+NC='\033[0m' # No Color
 
 #todo: use as an argument
+TMP_WORK_DIR=/tmp/ddarch.$(date +%s)
 TMP_MOUNT_DIR=/tmp/ddarch.mnt.$(date +%s)
 
+args=($@)
 commandName=archive
 input=
 output=
@@ -75,104 +81,341 @@ noCompress=false
 noExtend=false
 quiet=false
 verbose=false
+allYes=false
+inPlace=false
 
 #===========================================
 
 
-function usage {
-    [ "$*" ] && echo "$0: $*"
-    sed -n '/^##/,/^$/s/^## \{0,1\}//p' "$SCRIPT_DIR/$SCRIPT_FILENAME" |
+usage() 
+{
+  [ "$*" ] && echo "$0: $*"
+  sed -n '/^##/,/^$/s/^## \{0,1\}//p' "$SCRIPT_DIR/$SCRIPT_FILENAME" |
   sed "s/\$SCRIPT_NAME/$SCRIPT_NAME/g" |
   sed "s/\$SCRIPT_FILENAME/$SCRIPT_FILENAME/g" |
   sed "s/\$SCRIPT_VERSION/$SCRIPT_VERSION/g"
-    
-    exit 2
+
+  exit 2
 } 2>/dev/null
 
 
-function main {
-    readCommandArg $1
-    readOptions "$@"
+main() {
+    readCommandArg
+    readOptions
     run
+    cleanup #TODO: trap
 }
 
 readCommandArg()
 {
+  set -- "${args[@]}"
   arg=$1
   firstChar=${arg:0:1}
 
   if [ "$firstChar" != "-" ] && [ ! -z "$arg" ]; then
     commandName=$arg
     shift
+    args=($@)
   fi
 }
 
 readOptions()
 {
-    if [ $# -eq 0 ]; then
-      usage;
-    fi
-    
-    while [ $# -gt 0 ]; do
-      case $1 in
-        ('-h'|'--help')
-          usage 2>&1;;
-        ('-v'|'--version')
-          echo "$SCRIPT_NAME v$SCRIPT_VERSION"
-          exit 0;;
-        ('-i'|'--input')
-          shift
-          input="$1";;
-        ('-o'|'--output')
-          shift
-          output="$1";;
-        ('-d'|'--dd-args')
-          shift
-          ddArgs="$1";;
-        ('-n'|'--name')
-          shift
-          outputBaseName="$1";;
-        ('--shrink-tail')
-          shift
-          shrinkTailSize="$1";;
-        ('--truncate-tail')
-          shift
-          truncateTailSize="$1";;
-        ('--no-resize')
-          noResize=true;;
-        ('--no-truncate')
-          noTruncate=true;;
-        ('--no-zero')
-          noZero=true;;
-        ('--no-compress')
-          noCompress=true;;
-        ('--no-extend')
-          noExtend=true;;
-        ('--quiet')
-          quiet=true;;
-        ('--verbose')
-          verbose=true;;
-        ('--')
-          shift
-          break;;
-        ('-'*)
-          echo -e "\n$0 $1: unknown option. Use --help to learn more.\n"
-          exit 3
-          break;;
-        (*)
-          break;;
-      esac
-
-      shift
-    done
+  set -- "${args[@]}"
+  
+  if [ $# -eq 0 ]; then
+    usage;
+  fi
+  
+  while [ $# -gt 0 ]; do
+    case $1 in
+      ('-h'|'--help')
+        usage 2>&1;;
+      ('-v'|'--version')
+        echo "$SCRIPT_NAME v$SCRIPT_VERSION"
+        exit 0;;
+      ('-i'|'--input')
+        shift
+        input="$1";;
+      ('-o'|'--output')
+        shift
+        output="$1";;
+      ('-d'|'--dd-args')
+        shift
+        ddArgs="$1";;
+      ('-a'|'--arch-type')
+        shift
+        archType=$1;;
+      ('-n'|'--name')
+        shift
+        outputBaseName="$1";;
+      ('--shrink-tail')
+        shift
+        shrinkTailSize="$1";;
+      ('--truncate-tail')
+        shift
+        truncateTailSize="$1";;
+      ('--no-resizepart')
+        noResize=true;;
+      ('--no-truncate')
+        noTruncate=true;;
+      ('--no-zero')
+        noZero=true;;
+      ('--no-extend')
+        noExtend=true;;
+      ('--quiet')
+        quiet=true;;
+      ('--in-place')
+        inPlace=true;;
+      ('-y'|'--yes')
+        allYes=true;;
+      ('--verbose')
+        verbose=true;;
+      ('--')
+        shift
+        break;;
+      ('-'*)
+        elog -e "\n$0 $1: unknown option. Use --help to learn more.\n"
+        exit 3
+        break;;
+      (*)
+        usage;;
+    esac
+  
+    shift
+  done
 }
 
-#===========================================
+#========== cli functions ==========
 
 
-function run 
+run() 
 {
-  :
+  assertInputExists
+  assertProperArchType
+  test -z "$output" && setupOutputName
+  assertNoOutputFile
+  assertRoot
+
+  mkdir -p $TMP_WORK_DIR
+  mkdir -p $TMP_MOUNT_DIR
+  
+  case $commandName in
+    ('archive')
+      archiveImageOrDevice;;
+    ('restore')
+      restoreArchiveOrImage;;
+    (*)
+      elog "Unknown command: $commandName"
+      exit 1
+  esac
+}
+
+cleanup()
+{
+  test ! -z $TMP_WORK_DIR && rm -r $TMP_WORK_DIR
+  rmdir $TMP_MOUNT_DIR
+}
+
+assertProperArchType()
+{
+  if [ $archType = 7z ]; then
+    if ! command -v 7z &>/dev/null; then
+      elog "7z not found, falling back to tgz"
+      archType=tgz
+    fi
+  elif [ $archType = zip ]; then
+    if ! command -v zip &>/dev/null; then
+      elog "zip not found, falling back to tgz"
+      archType=tgz
+    fi
+  fi
+}
+
+assertNoOutputFile()
+{
+  if test -e "$output"; then
+    if confirm "The output file ($output) already exists. Do you want to remove it?"; then
+      rm "$output"
+    else
+      exit 0
+    fi
+  fi
+}
+
+setupOutputName() 
+{
+  output="$PWD/"$(date +%Y-%m-%d)"-${outputBaseName}".img
+  
+  case $archType in
+    ('7z')
+      output=${output}.7z;;
+    ('zip')
+      output=${output}.zip;;
+    ('tgz'|'tar.gz'|'tar')
+      output=${output}.tar.gz;;
+    ('none')
+      :;;
+    (*)
+      elog "Unknown archive type: $archType"
+      exit 1
+  esac
+}
+
+archiveImageOrDevice()
+{
+  ilog "Archiving $input as $output"
+  
+  local inputType=$(getInputType)
+  
+  if [ $inPlace = true ]; then
+    if [[ "$inputType" == "device" ]]; then
+      elog "The '--in-place' flag cannot be used with the device given as input, aborting"
+      exit 1
+    fi
+    
+    local imageFile="$input"
+  else
+    imageFile="$TMP_WORK_DIR/image.img"
+    dd if="$input" of="$imageFile" status=progress $ddArgs
+  fi
+  
+  archiveImageFile "$imageFile"
+}
+
+restoreArchiveOrImage()
+{
+  ilog "Rostoring image $input to $output"
+  vlog some verbose log
+}
+
+archiveImageFile()
+{
+  local imageFile="$1"
+  vlog "Archiving image file: $imageFile"
+  
+  if [ $noResize = false ]; then
+    isExt=$(hasExtendedPartition "$imageFile")
+    if [ $isExt = true ]; then
+      elog "Shrinking LBA partitions not supported, skipping"
+    else
+      shrinkLastPartition "$imageFile" $shrinkTailSize
+    fi
+  fi
+  
+  if [ $noZero = false ]; then
+    fillWithZeros "$imageFile"
+  fi
+  
+  if [ $noTruncate = false ]; then
+    truncateImage "$imageFile" $truncateTailSize
+  fi
+  
+  #TODO: refactor
+  if [ $archType = none ]; then
+    if [ $inPlace = false ]; then
+      vlog "Moving $outputImage to $output"
+      mv "$imageFile" "$output"
+    fi
+  else
+    compressImage "$imageFile"
+    if [ $inPlace = true ]; then
+      rm "$imageFile"
+    fi
+  fi
+}
+
+assertInputExists()
+{
+  test -e "$input" || (elog "Input does not exist: $input" && exit 1)
+}
+
+assertNoOutputExists()
+{
+  test -e "$input" || (elog "Input does not exist: $input" && exit 1)
+}
+
+assertRoot()
+{
+  if [[ $EUID -ne 0 ]]; then
+    if ! confirm "This script is meant to be run as root user, do you want to continue without root privileges?"; then
+      exit 1
+    fi
+  fi 
+}
+
+getInputType()
+{
+  fileType=$(file -N -i "$input" | awk '{print $2}')
+  if [[ "$fileType" == "inode/blockdevice;" ]]; then
+    echo "device"
+  elif [[ "$fileType" == "application/octet-stream;" ]]; then
+    echo "image"
+  else
+    echo $fileType
+  fi
+}
+
+compressImage()
+{
+  imageFile="$1"
+  
+  case $archType in
+    ('7z')
+      7z a "$output" "$imageFile";;
+    ('zip')
+      zip "$output" "$imageFile";;
+    ('tgz'|'tar.gz'|'tar')
+      tar -zcf "$output" "$imageFile";;
+  esac
+  
+}
+
+function confirm {
+
+  if [ $allYes = true ]; then
+    return 0
+  fi
+
+  text=$1
+  c=''
+  while [[ "$c" != "n" ]] && [[ "$c" != "y" ]]; do
+    echo -n "${text} [y/n]: "
+    read c
+  done
+  
+  if [ "$c" == "y" ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+
+#========== shlib functions ==========
+
+ilog()
+{
+  echo -e $(date "+%Y-%m-%d %H:%M:%S")" INFO: $@"
+}
+
+elog()
+{
+  echo -e $(date "+%Y-%m-%d %H:%M:%S")" ${RED}ERROR: $@${NC}" 1>&2
+}
+
+vlog()
+{
+  if [ $verbose = true ]; then
+    echo -e $(date "+%Y-%m-%d %H:%M:%S")" VER: $@"
+  fi
+}
+
+execCmd()
+{
+  vlog "Executing ("$(caller)"): $@"
+  eval $@
+  return $?
 }
 
 hasExtendedPartition()
@@ -213,8 +456,8 @@ shrinkLastPartition()
   
   local loDevice=$(losetup -f)
   
-  losetup -L -o $offsetBytes $loDevice "$image"
-  e2fsck -f $loDevice > /dev/null 2>&1 ||:
+  execCmd losetup -L -o $offsetBytes $loDevice "$image"
+  execCmd e2fsck -f $loDevice > /dev/null 2>&1 ||:
   
   local blockSize=$(getBlockSize $loDevice)
   local minBlocks=$(estimateBlocksAfterShrink $loDevice)
@@ -222,11 +465,12 @@ shrinkLastPartition()
   local newFsSize=$[$blockSize * $minBlocks]
   local newEnd=$[$offsetBytes + $newFsSize]
   
-  resize2fs $loDevice $minBlocks > /dev/null 2>&1 || echo "Error while resizing $loDevice to $minBlocks blocks"
-  losetup -d $loDevice
+  execCmd e2fsck -f $loDevice 
+  execCmd resize2fs $loDevice $minBlocks #> /dev/null 2>&1 || echo "Error while resizing $loDevice to $minBlocks blocks"
+  execCmd losetup -d $loDevice
 
   partNumber=$(getLastPartitionNumber "$image")
-  echo Yes | parted "$image" ---pretend-input-tty unit B resizepart $partNumber ${newEnd}B >/dev/null 2>&1 
+  echo Yes | execCmd parted "$image" ---pretend-input-tty unit B resizepart $partNumber ${newEnd}B >/dev/null 2>&1 
 }
 
 fillWithZeros()
@@ -239,21 +483,19 @@ fillWithZeros()
   do
     local offsetBytes=$[$sectorSize * $offset]
     local loDevice=$(losetup -f)
-    losetup -L -o $offsetBytes $loDevice "$image"
-    mkdir -p $TMP_MOUNT_DIR
-    mount $loDevice $TMP_MOUNT_DIR
+    execCmd losetup -L -o $offsetBytes $loDevice "$image"
+    test -d $TMP_MOUNT_DIR || mkdir -p $TMP_MOUNT_DIR
     
-    pushd $TMP_MOUNT_DIR >/dev/null
+    execCmd mount $loDevice $TMP_MOUNT_DIR
+    
     local space=$(getAvailableSpace $TMP_MOUNT_DIR)
     local zerosFile="$TMP_MOUNT_DIR/zeros.bin"
-    head -c $space /dev/zero > "$zerosFile"
-    sync
+    execCmd head -c $space /dev/zero > "$zerosFile"
+    execCmd sync
     rm "$zerosFile"
-    popd >/dev/null
     
-    umount "$TMP_MOUNT_DIR"
-    rmdir "$TMP_MOUNT_DIR"
-    losetup -d $loDevice
+    execCmd umount "$TMP_MOUNT_DIR"
+    execCmd losetup -d $loDevice
     
   done
 }
@@ -281,10 +523,10 @@ truncateImage()
 
   local trSize=$[$endSector * $sectorSize + $tailSize]
 
-  truncate --size $trSize "$image"
+  execCmd truncate --size $trSize "$image"
   
   if [ $isGpt = true ]; then
-    sgdisk -e "$image" >/dev/null 2>&1
+    execCmd sgdisk -e "$image" >/dev/null 2>&1
   fi
 }
 
@@ -292,15 +534,15 @@ restoreImage()
 {
   image="$1"
   device=$2
-  dd if="$image" of=$device status=progress
+  execCmd dd if="$image" of=$device status=progress
   
   isGpt=$(hasGptLayout $device)
   if [ $isGpt = true ]; then
-    sgdisk -e $device > /dev/null 2>&1
+    execCmd sgdisk -e $device > /dev/null 2>&1
   fi
   
   lastPartitionNum=$(getLastPartitionNumber $device)
-  parted --script $device "resizepart $lastPartitionNum -1"
+  execCmd parted --script $device \"resizepart $lastPartitionNum -1\"
 }
 
 getBlockCount()
