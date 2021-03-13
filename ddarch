@@ -64,6 +64,8 @@ NC='\033[0m' # No Color
 #todo: use as an argument
 TMP_WORK_DIR=/tmp/ddarch.$(date +%s)
 TMP_MOUNT_DIR=/tmp/ddarch.mnt.$(date +%s)
+STDOUT=`readlink -f /proc/$$/fd/1`
+STDERR=`readlink -f /proc/$$/fd/2`
 
 args=($@)
 commandName=archive
@@ -163,7 +165,7 @@ readOptions()
         noZero=true;;
       ('--no-extend')
         noExtend=true;;
-      ('--quiet')
+      ('-q'|'--quiet')
         quiet=true;;
       ('--in-place')
         inPlace=true;;
@@ -191,6 +193,10 @@ readOptions()
 
 run() 
 {
+  if [ $quiet = true ]; then
+    exec &>/dev/null
+  fi
+
   assertInputExists
   assertProperArchType
   test -z "$output" && setupOutputName
@@ -198,7 +204,7 @@ run()
   assertRoot
 
   mkdir -p $TMP_WORK_DIR
-  mkdir -p $TMP_MOUNT_DIR
+  mkdir -p $TMP_MOUNT_DIR  
   
   case $commandName in
     ('archive')
@@ -266,7 +272,7 @@ archiveImageOrDevice()
 {
   ilog "Archiving $input as $output"
   
-  local inputType=$(getInputType)
+  local inputType=$(getInputType)  
   
   if [ $inPlace = true ]; then
     if [[ "$inputType" == "device" ]]; then
@@ -413,8 +419,13 @@ vlog()
 
 execCmd()
 {
-  vlog "Executing ("$(caller)"): $@"
-  eval $@
+  cmd="$@"
+  if [ $quiet = true ]; then
+    cmd="$cmd &>/dev/null"
+  fi
+  
+  vlog "Executing ("$(caller)"): $cmd"
+  eval "$cmd"
   return $?
 }
 
@@ -455,21 +466,21 @@ shrinkLastPartition()
   local offsetBytes=$[$offsetSectors * $sectorSize]
   
   local loDevice=$(losetup -f)
-  
+ 
   execCmd losetup -L -o $offsetBytes $loDevice "$image"
-  execCmd e2fsck -f $loDevice > /dev/null 2>&1 ||:
-  
+  execCmd e2fsck -y -f $loDevice
+
   local blockSize=$(getBlockSize $loDevice)
   local minBlocks=$(estimateBlocksAfterShrink $loDevice)
   local minBlocks=$[$minBlocks + $tailSize / $blockSize]
   local newFsSize=$[$blockSize * $minBlocks]
   local newEnd=$[$offsetBytes + $newFsSize]
   
-  execCmd e2fsck -f $loDevice 
   execCmd resize2fs $loDevice $minBlocks #> /dev/null 2>&1 || echo "Error while resizing $loDevice to $minBlocks blocks"
   execCmd losetup -d $loDevice
 
   partNumber=$(getLastPartitionNumber "$image")
+
   echo Yes | execCmd parted "$image" ---pretend-input-tty unit B resizepart $partNumber ${newEnd}B >/dev/null 2>&1 
 }
 
@@ -568,7 +579,7 @@ getSectorSize()
 
 estimateBlocksAfterShrink()
 {
-  local device=$1
+  local device=$1  
   local value=$(resize2fs -P $device 2>/dev/null | awk '{print $NF}')
   echo $(trim "$value")
 }
