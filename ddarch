@@ -58,7 +58,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 set -e          # exit on command errors (so you MUST handle exit codes properly!)
 set -o pipefail # capture fail exit codes in piped commands
-#set -x         # execution tracing debug messages
+#set -x          # execution tracing debug messages
 
 RED='\033[0;31m'
 GREEN='\033[1;32m'
@@ -251,12 +251,12 @@ assertProperArchType()
 {
   if [ $archType = 7z ]; then
     if ! command -v 7z &>/dev/null; then
-      elog "7z not found, falling back to tgz"
+      wlog "7z not found, falling back to tgz"
       archType=tgz
     fi
   elif [ $archType = zip ]; then
     if ! command -v zip &>/dev/null; then
-      elog "zip not found, falling back to tgz"
+      wlog "zip not found, falling back to tgz"
       archType=tgz
     fi
   fi
@@ -332,7 +332,7 @@ restoreArchiveOrImage()
 
 verifyPartitions() 
 {
-  offsets=( $(getStartOffsets $output) )
+  offsets=( $(getStartOffsets $output "Linux\|FAT32") )
   vlog "Offsets: ${offsets[*]}"
   for offset in "${offsets[@]}"
   do
@@ -342,7 +342,7 @@ verifyPartitions()
     local offsetBytes=$(($sectorSize * $offset))
     loDevice=$(losetup -f)
     execCmd losetup --offset $offsetBytes $loDevice $output
-    if fsck -t ext2,ext3,ext4,vfat,ntfs -y $loDevice; then
+    if fsck -t ext2,ext3,ext4,vfat -y $loDevice; then
       ilog "${GREEN}Partition verified${NC}"
     else
       elog "Partition starting at sector $offset cannot be positively verified"
@@ -461,6 +461,11 @@ ilog()
   echo -e $(date "+%Y-%m-%d %H:%M:%S")" INFO: $@"
 }
 
+wlog()
+{
+  echo -e $(date "+%Y-%m-%d %H:%M:%S")" WARNING: $@" 1>&2
+}
+
 elog()
 {
   echo -e $(date "+%Y-%m-%d %H:%M:%S")" ${RED}ERROR: $@${NC}" 1>&2
@@ -495,6 +500,16 @@ hasExtendedPartition()
   fi
 }
 
+isLastPartitionExt()
+{
+  local image="$1"
+  if $(parted --script "$image" print | awk '/./{line=$0} END{print line}' | grep -q 'ext[2-4]'); then
+    echo true
+  else
+    echo false
+  fi
+}
+
 getLastPartitionOffset()
 {
   local image="$1"
@@ -513,6 +528,15 @@ shrinkLastPartition()
 {
   local image="$1"
   local tailSize="$2"
+  
+  vlog "Shrinking the last partition with tail $tailSize"
+  
+  isExt=$(isLastPartitionExt "$image")
+  if [ $isExt = false ]; then
+    wlog "Last partition does not look like Linux EXT partition; shrinking skipped"
+    return
+  fi
+  
   if [ -z "$tailSize" ]; then 
     tailSize=$shrinkTailSize; 
   fi
@@ -532,7 +556,7 @@ shrinkLastPartition()
   local newFsSize=$(($blockSize * $minBlocks))
   local newEnd=$(($offsetBytes + $newFsSize))
   
-  execCmd resize2fs $loDevice $minBlocks #> /dev/null 2>&1 || echo "Error while resizing $loDevice to $minBlocks blocks"
+  execCmd resize2fs $loDevice $minBlocks
   execCmd losetup -d $loDevice
 
   partNumber=$(getLastPartitionNumber "$image")
@@ -548,6 +572,8 @@ fillWithZeros()
   local offsets=( $(getStartOffsets "$image") )
   for offset in "${offsets[@]}"
   do
+    vlog "Filling image partition (offset: $offset) with zeroes"
+    
     local offsetBytes=$(($sectorSize * $offset))
     loDevice=$(losetup -f)
     execCmd losetup -L -o $offsetBytes $loDevice "$image"
@@ -571,6 +597,9 @@ truncateImage()
 {
   local image="$1"
   local tailSize="$2"
+  
+  vlog "Truncating image with tail size $tailSize"
+  
   if [ -z "$tailSize" ]; then 
     tailSize=$truncateTailSize; 
   fi
@@ -590,6 +619,7 @@ truncateImage()
 
   local trSize=$(($endSector * $sectorSize + $tailSize))
 
+  vlog "Final truncation size: $trSize bytes"
   execCmd truncate --size $trSize "$image"
   
   if [ $isGpt = true ]; then
@@ -650,7 +680,13 @@ getLastPartitionNumber()
 getStartOffsets()
 {
   local image="$1"
-  local value=$(fdisk -l -o Start,Type "$image" | grep Linux | awk '{print $1}')
+  local typesExpr="$2"
+  
+  if [ -z "$typesExpr" ]; then
+    typesExpr="Linux"
+  fi
+  
+  local value=$(fdisk -l -o Start,Type "$image" | grep "$typesExpr" | awk '{print $1}')
   echo $value
 }
 
