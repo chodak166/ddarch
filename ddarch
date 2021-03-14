@@ -7,7 +7,6 @@
 ##
 ## Commands:
 ##
-##
 ## archive [default]                shrink, truncate and compress image file; clone first if the input is a block device
 ## Options:
 ##   -i, --input [file]             input image file or block device
@@ -15,9 +14,9 @@
 ##   -d, --dd-args [string]         additional dd arguments
 ##   -a, --arch-type [string]       archive type: tgz, zip, 7z, none
 ##   -n, --name [string]            replace "image" suffix of the output file name with the given name
-##   --shrink-tail [bytes]          additional empty space left in the shrunk partition
+##   --resizepart-tail [bytes]      additional empty space left in the shrunk partition
 ##   --truncate-tail [bytes]        additional empty space left in the truncated image
-##   --no-resizepart                    do not resize the last partition
+##   --no-resizepart                do not resize the last partition
 ##   --no-truncate                  do not truncate the image
 ##   --no-zero                      do not fill empty space with zeros
 ##   --in-place                     edit input file when it's an image (and remove after compression)
@@ -38,16 +37,48 @@
 ##   -q, --quiet                    do not print any output
 ##   -y, --yes                      say yes to everything (non-interactive mode)
 ##   --work-dir [dir]               working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
+##   --debug                        Run in debug mode
 ##   -h, --help                     Display this message
 ##   -v, --version                  Display script version
 ##
 ## 
-## Examples:
+## Examples (archiving):
 ## 
-## Create an archive from block device (clone, shrink, fill with zeroes, truncate, compress):
-## $SCRIPT_FILENAME --name myimage -i /dev/sdc
+## Create an archive from a block device with default output name
+## (clone, shrink, fill with zeroes, truncate, compress):
+##
+##   $SCRIPT_FILENAME -i /dev/sdx # (the same as $SCRIPT_FILENAME archive -i /dev/sdx)
+##
+## Create ZIP archive from a block device without resizing and truncating:
+## 
+##   $SCRIPT_FILENAME -i /dev/sdx --no-resizepart --no-truncate --arch-type zip --name raspbian-buster
+## 
+## Create img file (no compression) from a block device with 10MiB free
+## space on the last partition and 5MiB of unpartitioned space:
+## 
+##   $SCRIPT_FILENAME -i /dev/sdx -a none --resizepart-tail $((10*1024*1024)) --truncate-tail $((10*1024*1024))
+## 
+## Resize and truncate given image (non-invasive, requires extra space):
+##
+##   $SCRIPT_FILENAME -i my_image.img -o my_image_min.img --arch-type none
+## 
+## Resize and truncate given image (invasive! no extra space needed):
+##
+##   $SCRIPT_FILENAME -i my_image.img -o my_image_min.img --arch-type none --in-place
 ##
 ##
+## Examples (restoring):
+## 
+## Copy given image to a block device, extend the last partition to its capacity
+## and verify restored filesystems:
+## 
+##   $SCRIPT_FILENAME restore -i my_image.img -o /dev/sdx --verify
+## 
+## Restore 7z archive to a block device without extending the last partiion
+## (the image will be extracted through a pipe based on the file extension):
+## 
+##   $SCRIPT_FILENAME restore -i my_image.img.7z -o /dev/sdx --no-extend
+## 
 
 #===========================================
 
@@ -97,13 +128,15 @@ unarchivedOutput=
 
 usage() 
 {
-  [ "$*" ] && echo "$0: $*"
+  exitCode=$1
+  test -z $exitCode && exitCode=0
+  
   sed -n '/^##/,/^$/s/^## \{0,1\}//p' "$SCRIPT_DIR/$SCRIPT_FILENAME" |
   sed "s/\$SCRIPT_NAME/$SCRIPT_NAME/g" |
   sed "s/\$SCRIPT_FILENAME/$SCRIPT_FILENAME/g" |
   sed "s/\$SCRIPT_VERSION/$SCRIPT_VERSION/g"
 
-  exit 2
+  exit $exitCode
 } 2>/dev/null
 
 
@@ -131,13 +164,13 @@ readOptions()
   set -- "${args[@]}"
   
   if [ $# -eq 0 ]; then
-    usage;
+    usage 1;
   fi
   
   while [ $# -gt 0 ]; do
     case $1 in
       ('-h'|'--help')
-        usage 2>&1;;
+        usage 0 2>&1;;
       ('-v'|'--version')
         echo "$SCRIPT_NAME v$SCRIPT_VERSION"
         exit 0;;
@@ -156,7 +189,7 @@ readOptions()
       ('-n'|'--name')
         shift
         outputBaseName="$1";;
-      ('--shrink-tail')
+      ('--resizepart-tail')
         shift
         shrinkTailSize="$1";;
       ('--truncate-tail')
@@ -184,6 +217,9 @@ readOptions()
       ('--mount-dir')
         shift
         tmpMountDir="$1";;
+      ('--debug')
+        PS4='- Line ${LINENO}: '
+        set -x;;
       ('-V'|'--verbose')
         verbose=true;;
       ('--')
@@ -194,7 +230,7 @@ readOptions()
         exit 3
         break;;
       (*)
-        usage;;
+        usage 1;;
     esac
   
     shift
@@ -225,8 +261,8 @@ run()
       archiveImageOrDevice;;
       
     ('restore')
+      test -z $output && elog "No output specified" && usage 1
       restoreArchiveOrImage;;
-      
     (*)
       elog "Unknown command: $commandName"
       exit 1
@@ -318,12 +354,8 @@ restoreArchiveOrImage()
 {
   ilog "Rostoring image $input to $output"
   
-  restoreImage "$input" "$output"
-  
-#  if [ $noExtend = false ]; then
-#    
-#  fi
-  
+  restoreImage "$input" "$output" $noExtend
+
   if [ $verify = true ]; then
     verifyPartitions $output
   fi
@@ -336,7 +368,7 @@ verifyPartitions()
   vlog "Offsets: ${offsets[*]}"
   for offset in "${offsets[@]}"
   do
-    vlog "Verifying partition at sector $offset"
+    ilog "Verifying partition at sector $offset"
     
     sectorSize=$(getSectorSize $output)
     local offsetBytes=$(($sectorSize * $offset))
@@ -493,7 +525,7 @@ execCmd()
 hasExtendedPartition()
 {
   local image="$1"
-  if $(fdisk -l "$image" -o Type | grep -q 'W95'); then
+  if $(sfdisk -l "$image" -o Type | grep -q 'W95'); then
     echo true
   else
     echo false
@@ -513,14 +545,14 @@ isLastPartitionExt()
 getLastPartitionOffset()
 {
   local image="$1"
-  local offset=$(fdisk -l "$image" -o Start | tail -n 1)
+  local offset=$(sfdisk -l "$image" -o Start | tail -n 1)
   echo $(trim "$offset")
 }
 
 getLastPartitionSize()
 {
   local image="$1"
-  local size=$(fdisk --bytes -l -o Size --bytes "$image" | tail -n1)
+  local size=$(sfdisk --bytes -l -o Size --bytes "$image" | tail -n1)
   echo $(trim "$size")
 }
 
@@ -629,10 +661,36 @@ truncateImage()
 
 restoreImage()
 {
-  image="$1"
-  device=$2
-  execCmd dd if="$image" of=$device status=progress
+  local image="$1"
+  local device=$2
+  local skipResizepart=$3
   
+  if [ -z $skipResizepart ]; then 
+    skipResizepart=false
+  fi
+  
+  local imageBasename=$(basename "$image")
+  local imageExtension="${imageBasename##*.}"
+  
+  case $imageExtension in
+    ('7z'|'7zip')
+      execCmd 7z e -so "$image" | dd of=$device status=progress $ddArgs;;
+    ('zip')
+      execCmd unzip -p "$image" | dd of=$device status=progress $ddArgs;;
+    ('tgz'|'gz'|'tar')
+      execCmd tar -xOf "$image" | dd of=$device status=progress $ddArgs;;
+    (*)
+      execCmd dd if="$image" of=$device status=progress $ddArgs;;
+  esac
+  
+  if [ $skipResizepart = false ]; then
+    extendLastPartition $device
+  fi
+}
+
+extendLastPartition()
+{
+  local device=$1
   isGpt=$(hasGptLayout $device)
   if [ $isGpt = true ]; then
     execCmd sgdisk -e $device > /dev/null 2>&1
@@ -658,8 +716,8 @@ getBlockSize()
 
 getSectorSize()
 {
-  local device=$1
-  local value=$(fdisk -l "$image" | grep 'Sector size' | awk '{print $(NF-4)}')
+  local image="$1"
+  local value=$(sfdisk -l "$image" | grep 'Sector size' | awk '{print $(NF-4)}')
   echo $(trim "$value")
 }
 
@@ -686,7 +744,7 @@ getStartOffsets()
     typesExpr="Linux"
   fi
   
-  local value=$(fdisk -l -o Start,Type "$image" | grep "$typesExpr" | awk '{print $1}')
+  local value=$(sfdisk -l -o Start,Type "$image" | grep "$typesExpr" | awk '{print $1}')
   echo $value
 }
 
@@ -700,14 +758,14 @@ getAvailableSpace()
 getEndSector()
 {
   local image="$1"
-  local value=$(fdisk -o End -l "$image" | tail -1)
+  local value=$(sfdisk -o End -l "$image" | tail -1)
   echo $(trim "$value")
 }
 
 hasGptLayout()
 {
   local image="$1"
-  if $(fdisk -l "$image" 2>/dev/null | grep -q 'type: gpt'); then
+  if $(sfdisk -l "$image" 2>/dev/null | grep -q 'type: gpt'); then
     echo true
   else
     echo false
