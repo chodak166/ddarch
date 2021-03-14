@@ -90,7 +90,7 @@
 
 SCRIPT_NAME=ddarch
 SCRIPT_FILENAME=$(basename "$0")
-SCRIPT_VERSION=0.1.0
+SCRIPT_VERSION=0.1.1
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 set -e          # exit on command errors (so you MUST handle exit codes properly!)
@@ -101,7 +101,6 @@ RED='\033[0;31m'
 GREEN='\033[1;32m'
 NC='\033[0m' # No Color
 
-#todo: use as an argument
 tmpWorkDir=/tmp/ddarch.$(date +%s)
 tmpMountDir=/tmp/ddarch.mnt.$(date +%s)
 STDOUT=`readlink -f /proc/$$/fd/1`
@@ -274,6 +273,7 @@ run()
     ('archive')
       assertProperArchType
       test -z "$output" && setupOutputName
+      assertNoTmpfsTemp
       assertNoOutputFile
       archiveImageOrDevice;;
       
@@ -326,6 +326,20 @@ assertNoOutputFile()
   fi
 }
 
+assertNoTmpfsTemp()
+{
+  local fsType=$(getPathFsType "$tmpWorkDir")
+  if [ $fsType = tmpfs ]; then
+    alternativeWorkDir="$HOME/ddarch.tmp."$(date +%s)
+    if ! confirm "It looks like $tmpWorkDir is a mounted tmpfs ramdisk. Do you want to use $alternativeWorkDir instead?"; then
+      tmpWorkDir="$alternativeWorkDir"
+      ilog "Using: $tmpWorkDir"
+    else
+      wlog "Using tmpfs as a working directory, consider re-run with --work-dir argument"
+    fi
+  fi
+}
+
 setupOutputName() 
 {
   output="$PWD/"$(date +%Y-%m-%d)"-${outputBaseName}".img
@@ -369,14 +383,13 @@ archiveImageOrDevice()
 
 restoreArchiveOrImage()
 {
-  ilog "Rostoring image $input to $output"
+  ilog "Restoring image $input to $output"
   
   restoreImage "$input" "$output" $noExtend
 
   if [ $verify = true ]; then
     verifyPartitions $output
   fi
-  
 }
 
 verifyPartitions() 
@@ -408,7 +421,7 @@ archiveImageFile()
   if [ $noResize = false ]; then
     isExt=$(hasExtendedPartition "$imageFile")
     if [ $isExt = true ]; then
-      elog "Shrinking LBA partitions not supported, skipping"
+      wlog "Shrinking LBA partitions not supported, skipping"
     else
       shrinkLastPartition "$imageFile" $shrinkTailSize
     fi
@@ -422,7 +435,6 @@ archiveImageFile()
     truncateImage "$imageFile" $truncateTailSize
   fi
   
-  #TODO: refactor
   if [ $archType = none ]; then
     if [ $inPlace = false ]; then
       vlog "Moving $outputImage to $output"
@@ -621,7 +633,7 @@ fillWithZeros()  #EXPFUN [image]
   local offsets=( $(getStartOffsets "$image") )
   for offset in "${offsets[@]}"
   do
-    vlog "Filling image partition (offset: $offset) with zeroes"
+    ilog "Filling image partition (offset: $offset) with zeroes"
     
     local offsetBytes=$(($sectorSize * $offset))
     loDevice=$(losetup -f)
@@ -776,6 +788,13 @@ getEndSector() #EXPFUN [image]
 {
   local image="$1"
   local value=$(sfdisk -o End -l "$image" | tail -1)
+  echo $(trim "$value")
+}
+
+getPathFsType() #EXPFUN [path]
+{
+  local path="$1"
+  local value=$(df -TP /tmp | tail -1 | awk '{print $2}')
   echo $(trim "$value")
 }
 
