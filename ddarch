@@ -38,6 +38,7 @@
 ##   -y, --yes                      say yes to everything (non-interactive mode)
 ##   --work-dir [dir]               working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
 ##   --debug                        Run in debug mode
+##   -f, --functions                List functions to be used after sourcing
 ##   -h, --help                     Display this message
 ##   -v, --version                  Display script version
 ##
