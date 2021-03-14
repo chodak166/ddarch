@@ -331,8 +331,10 @@ assertNoTmpfsTemp()
   local fsType=$(getPathFsType "$tmpWorkDir")
   if [ $fsType = tmpfs ]; then
     alternativeWorkDir="$HOME/ddarch.tmp."$(date +%s)
-    if ! confirm "It looks like $tmpWorkDir is a mounted tmpfs ramdisk. Do you want to use $alternativeWorkDir instead?"; then
+    if confirm "It looks like $tmpWorkDir is a mounted tmpfs ramdisk. Do you want to use $alternativeWorkDir instead?"; then
+      rmdir "$tmpWorkDir"
       tmpWorkDir="$alternativeWorkDir"
+      mkdir -p "$tmpWorkDir"
       ilog "Using: $tmpWorkDir"
     else
       wlog "Using tmpfs as a working directory, consider re-run with --work-dir argument"
