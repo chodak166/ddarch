@@ -1,8 +1,8 @@
-# ddarch
-
-A simple helper script for archiving dd imagesddarch v0.1.0
-
 ```
+ddarch v0.1.1
+
+A dd wrapper script with .img file archiving features.
+
 Usage: ddarch [command] [options]
 
 Commands:
@@ -14,8 +14,8 @@ Options:
   -d, --dd-args [string]         additional dd arguments
   -a, --arch-type [string]       archive type: tgz, zip, 7z, none
   -n, --name [string]            replace "image" suffix of the output file name with the given name
-  --resizepart-tail [bytes]      additional empty space left in the shrunk partition
-  --truncate-tail [bytes]        additional empty space left in the truncated image
+  --resizepart-tail [bytes]      additional empty space left in the shrunk partition (1MiB by default)
+  --truncate-tail [bytes]        additional empty space left in the truncated image (1MiB by default)
   --no-resizepart                do not resize the last partition
   --no-truncate                  do not truncate the image
   --no-zero                      do not fill empty space with zeros
@@ -79,4 +79,5 @@ Restore 7z archive to a block device without extending the last partiion
 (the image will be extracted through a pipe based on the file extension):
 
   ddarch restore -i my_image.img.7z -o /dev/sdx --no-extend
+
 ```
