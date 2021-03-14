@@ -61,7 +61,6 @@ cleanUp()
 runAllTests()
 {
   quiet=true
-  testHasExtendedPartition
   testLastPartitionOffset
   testLastPartitionSize
   testShrinkLastPartition
@@ -70,21 +69,6 @@ runAllTests()
   testGptTruncate
   testMbrRestore
   testGptRestore
-}
-
-testHasExtendedPartition()
-{
-  result=$(hasExtendedPartition $imageMbrExtFile)
-  assertEqual $result true \
-    "When the image contains an extended partition, then the hasExtendedPartition returns true"
-  
-  result=$(hasExtendedPartition $imageMbrPriFile)
-  assertEqual $result false \
-    "When the image does not contain an extended partition, then the hasExtendedPartition returns false"
-  
-  result=$(hasExtendedPartition $imageGptPriFile)
-  assertEqual $result false \
-    "When the image contains a GPT partition table, then the hasExtendedPartition returns false"
 }
 
 testLastPartitionOffset()

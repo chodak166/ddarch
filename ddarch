@@ -419,9 +419,9 @@ archiveImageFile()
   vlog "Archiving image file: $imageFile"
   
   if [ $noResize = false ]; then
-    isExt=$(hasExtendedPartition "$imageFile")
-    if [ $isExt = true ]; then
-      wlog "Shrinking LBA partitions not supported, skipping"
+    isExt=$(isLastPartitionExt "$imageFile")
+    if [ $isExt = false ]; then
+      wlog "Shrinking non-ext (Linux) partitions not supported, skipping"
     else
       shrinkLastPartition "$imageFile" $shrinkTailSize
     fi
@@ -549,16 +549,6 @@ execCmd()
   vlog "Executing ("$(caller)"): $cmd"
   eval "$cmd"
   return $?
-}
-
-hasExtendedPartition()
-{
-  local image="$1"
-  if $(sfdisk -l "$image" -o Type | grep -q 'W95'); then
-    echo true
-  else
-    echo false
-  fi
 }
 
 isLastPartitionExt() #EXPFUN [image]
