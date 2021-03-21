@@ -86,7 +86,7 @@ ddarch -i my_image.img -o my_image_min.img --arch-type none --in-place
 
 ## Restoring
 
-Copy given image to the device, extend the last partition to the largest possible size and verify the file system :
+Copy given image to the device, extend the last partition to the largest possible size and verify the file system:
 
 ```
 ddarch restore -i my_image.img -o /dev/sdx --verify
@@ -123,6 +123,7 @@ See `ddarch --functions` to learn more.
 # Dependencies
 The script uses tools from the following Debian packages:
 
+- `bash`
 - `coreutils` (dd, head, tail, etc.)
 - `parted`
 - `fdisk`

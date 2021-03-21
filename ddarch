@@ -50,12 +50,12 @@
 ## 
 ## Examples (archiving):
 ## 
-## Create an archive from a block device with default output name
+## Create an archive from a block device (sdx) with the default output name
 ## (clone, shrink, fill with zeroes, truncate, compress):
 ##
 ##   $SCRIPT_FILENAME -i /dev/sdx # (the same as $SCRIPT_FILENAME archive -i /dev/sdx)
 ##
-## Create ZIP archive from a block device without resizing and truncating:
+## Create ZIP archive from a block device (sdx) without resizing and truncating the output image:
 ## 
 ##   $SCRIPT_FILENAME -i /dev/sdx --no-resizepart --no-truncate --arch-type zip --name raspbian-buster
 ## 
@@ -75,8 +75,8 @@
 ##
 ## Examples (restoring):
 ## 
-## Copy given image to a block device, extend the last partition to its capacity
-## and verify restored filesystems:
+## Copy given image to the device, extend the last partition to the largest 
+## possible size and verify the file system:
 ## 
 ##   $SCRIPT_FILENAME restore -i my_image.img -o /dev/sdx --verify
 ## 
