@@ -1,16 +1,20 @@
+# DDARCH
+
 # Table of Contents
 
-1.  [Overview](#overview) \
-	1.1. [Motivation](#motivation)\
-	1.2. [Main features](#main-features)\
-	1.3.  [Precautions](#precautions)
-2.  [Quick start](#quick-start)\
-	2.1.  [Archiving](#archiving)\
-	2.2.  [Restoring](#restoring)\
-	2.3.  [Sourcing](#sourcing)
-3.  [Installation](#installation)
-4.  [Dependencies](#dependencies)
+1.  [Overview](#overview)  
+1.1. [Motivation](#motivation)  
+	1.2. [Main features](#main-features)  
+	1.3.  [Precautions](#precautions)  
+2.  [Quick start](#quick-start)  
+	2.1.  [Archiving](#archiving)  
+	2.2.  [Restoring](#restoring)  
+	2.3.  [Sourcing](#sourcing)  
+3.  [Installation](#installation)  
+4.  [Dependencies](#dependencies)  
 5.  [Usage](#usage)
+
+-----
 
 # Overview
 
