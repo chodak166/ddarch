@@ -40,7 +40,7 @@ fi
 
 git clean -fdx
 
-mkdir $TMP_DIR || rm $TMP_DIR/*
+mkdir $TMP_DIR || rm -r $TMP_DIR/*
 git archive --format=tar --prefix=$PREFIX/ HEAD | gzip -c > $TMP_DIR/$PREFIX.orig.tar.gz
 
 git checkout $PACKAGE_BRANCH
