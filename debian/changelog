@@ -1,3 +1,9 @@
+ddarch (0.1.2-1) bionic; urgency=medium
+
+  * Added bash completion script
+
+ -- chodak166 <chodak166@op.pl>  Thu, 25 Mar 2021 20:35:30 +0100
+
 ddarch (0.1.1-1) bionic; urgency=medium
 
   * Initial release
