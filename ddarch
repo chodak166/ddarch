@@ -1,0 +1,813 @@
+#!/bin/bash
+# Copyright (c) 2021  Lukasz Chodyla
+# Distributed under the Boost Software License v1.0.
+# See accompanying file LICENSE.txt or copy at
+# https://www.boost.org/LICENSE_1_0.txt for the full license.
+
+## $SCRIPT_NAME v$SCRIPT_VERSION
+##
+## A dd wrapper script with .img file archiving features.
+## 
+## Usage: $SCRIPT_FILENAME [command] [options]
+##
+## Commands:
+##
+## archive [default]                shrink, truncate and compress image file; clone first if the input is a block device
+## Options:
+##   -i, --input [file]             input image file or block device
+##   -o, --output [file]            output file, defaults to '<yyyy-mm-dd>-image.<ext>'
+##   -d, --dd-args [string]         additional dd arguments
+##   -a, --arch-type [string]       archive type: tgz, zip, 7z, none
+##   -n, --name [string]            replace "image" suffix of the output file name with the given name
+##   --resizepart-tail [bytes]      additional empty space left in the shrunk partition (1MiB by default)
+##   --truncate-tail [bytes]        additional empty space left in the truncated image (1MiB by default)
+##   --no-resizepart                do not resize the last partition
+##   --no-truncate                  do not truncate the image
+##   --no-zero                      do not fill empty space with zeros
+##   --in-place                     edit input file when it's an image (and remove after compression)
+##   --mnt-dir [dir]                temporary mount location; defaults to /tmp/ddarch.mnt.<timestamp>
+##
+##
+## restore                          copy the image to the device and extend the last partition; decompress first if the input is an archive
+## Options:
+##   -i, --input [file]             input .img file or an archive (tar.gz, tgz, zip, 7z)
+##   -o, --output [device]          target block device
+##   -d, --dd-args [string]         additional dd arguments
+##   --no-extend                    do not extend the last prtition to fit the target device size
+##   --verify                       compare input file and device checksums
+## 
+##
+## Global options:
+##   -V, --verbose                  print the commands being executed and additional information
+##   -q, --quiet                    do not print any output
+##   -y, --yes                      say yes to everything (non-interactive mode)
+##   --work-dir [dir]               working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
+##   --debug                        Run in debug mode
+##   -f, --functions                List functions to be used after sourcing
+##   -h, --help                     Display this message
+##   -v, --version                  Display script version
+##
+## 
+## Examples (archiving):
+## 
+## Create an archive from a block device (sdx) with the default output name
+## (clone, shrink, fill with zeroes, truncate, compress):
+##
+##   $SCRIPT_FILENAME -i /dev/sdx # (the same as $SCRIPT_FILENAME archive -i /dev/sdx)
+##
+## Create ZIP archive from a block device (sdx) without resizing and truncating the output image:
+## 
+##   $SCRIPT_FILENAME -i /dev/sdx --no-resizepart --no-truncate --arch-type zip --name raspbian-buster
+## 
+## Create img file (no compression) from a block device with 10MiB free
+## space on the last partition and 5MiB of unpartitioned space:
+## 
+##   $SCRIPT_FILENAME -i /dev/sdx -a none --resizepart-tail $((10*1024*1024)) --truncate-tail $((10*1024*1024))
+## 
+## Resize and truncate given image (non-invasive, requires extra space):
+##
+##   $SCRIPT_FILENAME -i my_image.img -o my_image_min.img --arch-type none
+## 
+## Resize and truncate given image (invasive! no extra space needed):
+##
+##   $SCRIPT_FILENAME -i my_image.img -o my_image_min.img --arch-type none --in-place
+##
+##
+## Examples (restoring):
+## 
+## Copy given image to the device, extend the last partition to the largest 
+## possible size and verify the file system:
+## 
+##   $SCRIPT_FILENAME restore -i my_image.img -o /dev/sdx --verify
+## 
+## Restore 7z archive to a block device without extending the last partiion
+## (the image will be extracted through a pipe based on the file extension):
+## 
+##   $SCRIPT_FILENAME restore -i my_image.img.7z -o /dev/sdx --no-extend
+## 
+
+#===========================================
+
+SCRIPT_NAME=ddarch
+SCRIPT_FILENAME=$(basename "$0")
+SCRIPT_VERSION=0.1.1
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+set -e          # exit on command errors (so you MUST handle exit codes properly!)
+set -o pipefail # capture fail exit codes in piped commands
+#set -x          # execution tracing debug messages
+
+RED='\033[0;31m'
+GREEN='\033[1;32m'
+NC='\033[0m' # No Color
+
+tmpWorkDir=/tmp/ddarch.$(date +%s)
+tmpMountDir=/tmp/ddarch.mnt.$(date +%s)
+STDOUT=`readlink -f /proc/$$/fd/1`
+STDERR=`readlink -f /proc/$$/fd/2`
+
+args=($@)
+commandName=archive
+input=
+output=
+ddArgs=
+outputBaseName=image
+shrinkTailSize=$((1024 * 1024)) # 1M
+truncateTailSize=$((1024 * 1024)) # 1M
+archType=7z
+noResize=false
+noTruncate=false
+noZero=false
+noCompress=false
+noExtend=false
+quiet=false
+verbose=false
+allYes=false
+inPlace=false
+verify=false
+
+loDevice=
+unarchivedOutput=
+#===========================================
+
+
+usage() 
+{
+  exitCode=$1
+  test -z $exitCode && exitCode=0
+  
+  sed -n '/^##/,/^$/s/^## \{0,1\}//p' "$SCRIPT_DIR/$SCRIPT_FILENAME" |
+  sed "s/\$SCRIPT_NAME/$SCRIPT_NAME/g" |
+  sed "s/\$SCRIPT_FILENAME/$SCRIPT_FILENAME/g" |
+  sed "s/\$SCRIPT_VERSION/$SCRIPT_VERSION/g"
+
+  exit $exitCode
+} 2>/dev/null
+
+main() {
+    readCommandArg
+    readOptions
+    run
+}
+
+readCommandArg()
+{
+  set -- "${args[@]}"
+  arg=$1
+  firstChar=${arg:0:1}
+
+  if [ "$firstChar" != "-" ] && [ ! -z "$arg" ]; then
+    commandName=$arg
+    shift
+    args=($@)
+  fi
+}
+
+readOptions()
+{
+  set -- "${args[@]}"
+  
+  if [ $# -eq 0 ]; then
+    usage 1;
+  fi
+  
+  while [ $# -gt 0 ]; do
+    case $1 in
+      ('-h'|'--help')
+        usage 0 2>&1;;
+      ('-v'|'--version')
+        echo "$SCRIPT_NAME v$SCRIPT_VERSION"
+        exit 0;;
+      ('-i'|'--input')
+        shift
+        input="$1";;
+      ('-o'|'--output')
+        shift
+        output="$1";;
+      ('-d'|'--dd-args')
+        shift
+        ddArgs="$1";;
+      ('-a'|'--arch-type')
+        shift
+        archType=$1;;
+      ('-n'|'--name')
+        shift
+        outputBaseName="$1";;
+      ('--resizepart-tail')
+        shift
+        shrinkTailSize="$1";;
+      ('--truncate-tail')
+        shift
+        truncateTailSize="$1";;
+      ('--no-resizepart')
+        noResize=true;;
+      ('--no-truncate')
+        noTruncate=true;;
+      ('--no-zero')
+        noZero=true;;
+      ('--no-extend')
+        noExtend=true;;
+      ('--verify')
+        verify=true;;
+      ('-q'|'--quiet')
+        quiet=true;;
+      ('--in-place')
+        inPlace=true;;
+      ('-y'|'--yes')
+        allYes=true;;
+      ('--work-dir')
+        shift
+        tmpWorkDir="$1";;
+      ('--mount-dir')
+        shift
+        tmpMountDir="$1";;
+      ('--debug')
+        PS4='- Line ${LINENO}: '
+        set -x;;
+      ('-V'|'--verbose')
+        verbose=true;;
+      ('-f'|'--functions')
+        listFunctions;;
+      ('--')
+        shift
+        break;;
+      ('-'*)
+        elog -e "\n$0 $1: unknown option. Use --help to learn more.\n"
+        exit 3
+        break;;
+      (*)
+        usage 1;;
+    esac
+  
+    shift
+  done
+}
+
+listFunctions() 
+{
+  echo -e "\n$SCRIPT_FILENAME functions (use 'source $SCRIPT_FILENAME'):"
+  grep '#EXPFUN' "$SCRIPT_DIR/$SCRIPT_FILENAME" \
+  | grep -v 'grep'| sed 's/#EXPFUN //g' | sed 's/()//g' \
+  | awk -F: '{if(f!=$1)print ""; f=$1; print " " $0;}'
+  echo -ne "\n"
+  exit 0
+} 2>/dev/null
+
+#========== cli functions ==========
+
+
+run() 
+{
+  trap cleanup EXIT
+  if [ $quiet = true ]; then
+    exec &>/dev/null
+  fi
+
+  assertInputExists
+  assertRoot
+
+  mkdir -p $tmpWorkDir
+  mkdir -p $tmpMountDir  
+  
+  case $commandName in
+    ('archive')
+      assertProperArchType
+      test -z "$output" && setupOutputName
+      assertNoTmpfsTemp
+      assertNoOutputFile
+      archiveImageOrDevice;;
+      
+    ('restore')
+      test -z $output && elog "No output specified" && usage 1
+      restoreArchiveOrImage;;
+    (*)
+      elog "Unknown command: $commandName"
+      exit 1
+  esac
+}
+
+cleanup()
+{
+  if [ ! -z $loDevice ] && findmnt -rno SOURCE,TARGET $loDevice >/dev/null; then
+    losetup -d $loDevice
+  fi
+  
+  if findmnt -rno SOURCE,TARGET $tmpMountDir >/dev/null; then
+    umount -f $tmpMountDir
+  fi
+  
+  test -d $tmpWorkDir && rm -r $tmpWorkDir
+  test -d $tmpMountDir && rmdir $tmpMountDir
+}
+
+assertProperArchType()
+{
+  if [ $archType = 7z ]; then
+    if ! command -v 7z &>/dev/null; then
+      wlog "7z not found, falling back to tgz"
+      archType=tgz
+    fi
+  elif [ $archType = zip ]; then
+    if ! command -v zip &>/dev/null; then
+      wlog "zip not found, falling back to tgz"
+      archType=tgz
+    fi
+  fi
+}
+
+assertNoOutputFile()
+{
+  if test -e "$output"; then
+    if confirm "The output file ($output) already exists. Do you want to remove it?"; then
+      rm "$output"
+    else
+      exit 0
+    fi
+  fi
+}
+
+assertNoTmpfsTemp()
+{
+  local fsType=$(getPathFsType "$tmpWorkDir")
+  if [ $fsType = tmpfs ]; then
+    alternativeWorkDir="$HOME/ddarch.tmp."$(date +%s)
+    if confirm "It looks like $tmpWorkDir is a mounted tmpfs ramdisk. Do you want to use $alternativeWorkDir instead?"; then
+      rmdir "$tmpWorkDir"
+      tmpWorkDir="$alternativeWorkDir"
+      mkdir -p "$tmpWorkDir"
+      ilog "Using: $tmpWorkDir"
+    else
+      wlog "Using tmpfs as a working directory, consider re-run with --work-dir argument"
+    fi
+  fi
+}
+
+setupOutputName() 
+{
+  output="$PWD/"$(date +%Y-%m-%d)"-${outputBaseName}".img
+  unarchivedOutput="$output"
+  
+  case $archType in
+    ('7z')
+      output=${output}.7z;;
+    ('zip')
+      output=${output}.zip;;
+    ('tgz'|'tar.gz'|'tar')
+      output=${output}.tar.gz;;
+    ('none')
+      :;;
+    (*)
+      elog "Unknown archive type: $archType"
+      exit 1
+  esac
+}
+
+archiveImageOrDevice()
+{
+  ilog "Archiving $input as $output"
+  
+  local inputType=$(getInputType)  
+  
+  if [ $inPlace = true ]; then
+    if [[ "$inputType" == "device" ]]; then
+      elog "The '--in-place' flag cannot be used with the device given as input, aborting"
+      exit 1
+    fi
+    
+    local imageFile="$input"
+  else
+    imageFile="$tmpWorkDir"/$(basename "$unarchivedOutput")
+    dd if="$input" of="$imageFile" status=progress $ddArgs
+  fi
+  
+  archiveImageFile "$imageFile"
+}
+
+restoreArchiveOrImage()
+{
+  ilog "Restoring image $input to $output"
+  
+  restoreImage "$input" "$output" $noExtend
+
+  if [ $verify = true ]; then
+    verifyPartitions $output
+  fi
+}
+
+verifyPartitions() 
+{
+  offsets=( $(getStartOffsets $output "Linux\|FAT32") )
+  vlog "Offsets: ${offsets[*]}"
+  for offset in "${offsets[@]}"
+  do
+    ilog "Verifying partition at sector $offset"
+    
+    sectorSize=$(getSectorSize $output)
+    local offsetBytes=$(($sectorSize * $offset))
+    loDevice=$(losetup -f)
+    execCmd losetup --offset $offsetBytes $loDevice $output
+    if fsck -t ext2,ext3,ext4,vfat -y $loDevice; then
+      ilog "${GREEN}Partition verified${NC}"
+    else
+      elog "Partition starting at sector $offset cannot be positively verified"
+    fi
+    execCmd losetup -d $loDevice
+  done
+}
+
+archiveImageFile()
+{
+  local imageFile="$1"
+  vlog "Archiving image file: $imageFile"
+  
+  if [ $noResize = false ]; then
+    isExt=$(isLastPartitionExt "$imageFile")
+    if [ $isExt = false ]; then
+      wlog "Shrinking non-ext (Linux) partitions not supported, skipping"
+    else
+      shrinkLastPartition "$imageFile" $shrinkTailSize
+    fi
+  fi
+  
+  if [ $noZero = false ]; then
+    fillWithZeros "$imageFile"
+  fi
+  
+  if [ $noTruncate = false ]; then
+    truncateImage "$imageFile" $truncateTailSize
+  fi
+  
+  if [ $archType = none ]; then
+    if [ $inPlace = false ]; then
+      vlog "Moving $outputImage to $output"
+      mv "$imageFile" "$output"
+    fi
+  else
+    compressImage "$imageFile"
+    if [ $inPlace = true ]; then
+      rm "$imageFile"
+    fi
+  fi
+}
+
+assertInputExists()
+{
+  test -e "$input" || (elog "Input does not exist: $input" && exit 1)
+}
+
+assertNoOutputExists()
+{
+  test -e "$input" || (elog "Input does not exist: $input" && exit 1)
+}
+
+assertRoot()
+{
+  if [[ $EUID -ne 0 ]]; then
+    if ! confirm "This script is meant to be run as root user, do you want to continue without root privileges?"; then
+      exit 1
+    fi
+  fi 
+}
+
+getInputType()
+{
+  fileType=$(file -N -i "$input" | awk '{print $2}')
+  if [[ "$fileType" == "inode/blockdevice;" ]]; then
+    echo "device"
+  elif [[ "$fileType" == "application/octet-stream;" ]]; then
+    echo "image"
+  else
+    echo $fileType
+  fi
+}
+
+compressImage()
+{
+  imageFile="$1"
+  
+  case $archType in
+    ('7z')
+      7z a "$output" "$imageFile";;
+    ('zip')
+      zip "$output" "$imageFile";;
+    ('tgz'|'tar.gz'|'tar')
+      tar -zcf "$output" "$imageFile";;
+  esac
+  
+}
+
+function confirm {
+
+  if [ $allYes = true ]; then
+    return 0
+  fi
+
+  text=$1
+  c=''
+  while [[ "$c" != "n" ]] && [[ "$c" != "y" ]]; do
+    echo -n "${text} [y/n]: "
+    read c
+  done
+  
+  if [ "$c" == "y" ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+
+#========== shlib functions ==========
+
+ilog()
+{
+  echo -e $(date "+%Y-%m-%d %H:%M:%S")" INFO: $@"
+}
+
+wlog()
+{
+  echo -e $(date "+%Y-%m-%d %H:%M:%S")" WARNING: $@" 1>&2
+}
+
+elog()
+{
+  echo -e $(date "+%Y-%m-%d %H:%M:%S")" ${RED}ERROR: $@${NC}" 1>&2
+}
+
+vlog()
+{
+  if [ $verbose = true ]; then
+    echo -e $(date "+%Y-%m-%d %H:%M:%S")" VER: $@"
+  fi
+}
+
+execCmd()
+{
+  cmd="$@"
+  if [ $quiet = true ]; then
+    cmd="$cmd &>/dev/null"
+  fi
+  
+  vlog "Executing ("$(caller)"): $cmd"
+  eval "$cmd"
+  return $?
+}
+
+isLastPartitionExt() #EXPFUN [image]
+{
+  local image="$1"
+  if $(parted --script "$image" print | awk '/./{line=$0} END{print line}' | grep -q 'ext[2-4]'); then
+    echo true
+  else
+    echo false
+  fi
+}
+
+getLastPartitionOffset() #EXPFUN [image]
+{
+  local image="$1"
+  local offset=$(sfdisk -l "$image" -o Start | tail -n 1)
+  echo $(trim "$offset")
+}
+
+getLastPartitionSize() #EXPFUN [image]
+{
+  local image="$1"
+  local size=$(sfdisk --bytes -l -o Size --bytes "$image" | tail -n1)
+  echo $(trim "$size")
+}
+
+shrinkLastPartition() #EXPFUN [image] [tail size]
+{
+  local image="$1"
+  local tailSize="$2"
+  
+  vlog "Shrinking the last partition with tail $tailSize"
+  
+  isExt=$(isLastPartitionExt "$image")
+  if [ $isExt = false ]; then
+    wlog "Last partition does not look like Linux EXT partition; shrinking skipped"
+    return
+  fi
+  
+  if [ -z "$tailSize" ]; then 
+    tailSize=$shrinkTailSize; 
+  fi
+  
+  local sectorSize=$(getSectorSize "$image")
+  local offsetSectors=$(getLastPartitionOffset "$image")
+  local offsetBytes=$(($offsetSectors * $sectorSize))
+  
+  loDevice=$(losetup -f)
+ 
+  execCmd losetup -L -o $offsetBytes $loDevice "$image"
+  execCmd e2fsck -y -f $loDevice
+
+  local blockSize=$(getBlockSize $loDevice)
+  local minBlocks=$(estimateBlocksAfterShrink $loDevice)
+  local minBlocks=$(($minBlocks + $tailSize / $blockSize))
+  local newFsSize=$(($blockSize * $minBlocks))
+  local newEnd=$(($offsetBytes + $newFsSize))
+  
+  execCmd resize2fs $loDevice $minBlocks
+  execCmd losetup -d $loDevice
+
+  partNumber=$(getLastPartitionNumber "$image")
+
+  echo Yes | execCmd parted "$image" ---pretend-input-tty unit B resizepart $partNumber ${newEnd}B >/dev/null 2>&1 
+}
+
+fillWithZeros()  #EXPFUN [image]
+{
+  local image="$1"
+  local sectorSize=$(getSectorSize "$image")
+  
+  local offsets=( $(getStartOffsets "$image") )
+  for offset in "${offsets[@]}"
+  do
+    ilog "Filling image partition (offset: $offset) with zeroes"
+    
+    local offsetBytes=$(($sectorSize * $offset))
+    loDevice=$(losetup -f)
+    execCmd losetup -L -o $offsetBytes $loDevice "$image"
+    test -d $tmpMountDir || mkdir -p $tmpMountDir
+    
+    execCmd mount $loDevice $tmpMountDir
+    
+    local space=$(getAvailableSpace $tmpMountDir)
+    local zerosFile="$tmpMountDir/zeros.bin"
+    execCmd head -c $space /dev/zero > "$zerosFile"
+    execCmd sync
+    rm "$zerosFile"
+    
+    execCmd umount "$tmpMountDir"
+    execCmd losetup -d $loDevice
+    
+  done
+}
+
+truncateImage()  #EXPFUN [image] [tail size]
+{
+  local image="$1"
+  local tailSize="$2"
+  
+  vlog "Truncating image with tail size $tailSize"
+  
+  if [ -z "$tailSize" ]; then 
+    tailSize=$truncateTailSize; 
+  fi
+  
+  local endSector=$(getEndSector "$image")
+  local sectorSize=$(getSectorSize "$image")
+  local isGpt=$(hasGptLayout "$image")
+  
+  if [ $isGpt = true ]; then
+    local offsets=( $(getStartOffsets "$image") )
+    local backupSize=$(($sectorSize * ${offsets[0]}))
+    local tailSize=$(($tailSize + $backupSize))
+  else
+    local tailSize=$(($tailSize + $sectorSize))
+  fi
+  
+
+  local trSize=$(($endSector * $sectorSize + $tailSize))
+
+  vlog "Final truncation size: $trSize bytes"
+  execCmd truncate --size $trSize "$image"
+  
+  if [ $isGpt = true ]; then
+    execCmd sgdisk -e "$image" >/dev/null 2>&1
+  fi
+}
+
+restoreImage()  #EXPFUN [image] [device] [skip resizepart (true/false)]
+{
+  local image="$1"
+  local device=$2
+  local skipResizepart=$3
+  
+  if [ -z $skipResizepart ]; then 
+    skipResizepart=false
+  fi
+  
+  local imageBasename=$(basename "$image")
+  local imageExtension="${imageBasename##*.}"
+  
+  case $imageExtension in
+    ('7z'|'7zip')
+      execCmd 7z e -so "$image" | dd of=$device status=progress $ddArgs;;
+    ('zip')
+      execCmd unzip -p "$image" | dd of=$device status=progress $ddArgs;;
+    ('tgz'|'gz'|'tar')
+      execCmd tar -xOf "$image" | dd of=$device status=progress $ddArgs;;
+    (*)
+      execCmd dd if="$image" of=$device status=progress $ddArgs;;
+  esac
+  
+  if [ $skipResizepart = false ]; then
+    extendLastPartition $device
+  fi
+}
+
+extendLastPartition() #EXPFUN [device]
+{
+  local device=$1
+  isGpt=$(hasGptLayout $device)
+  if [ $isGpt = true ]; then
+    execCmd sgdisk -e $device > /dev/null 2>&1
+  fi
+  
+  lastPartitionNum=$(getLastPartitionNumber $device)
+  execCmd parted --script $device \"resizepart $lastPartitionNum -1\"
+}
+
+getBlockCount() #EXPFUN [device]
+{
+  local device=$1
+  local value=$(dumpe2fs -h $device 2> /dev/null | grep 'Block count' | awk '{print $3}')
+  echo $(trim "$value")
+}
+
+getBlockSize() #EXPFUN [device]
+{
+  local device=$1
+  local value=$(dumpe2fs -h $device 2> /dev/null | grep 'Block size' | awk '{print $3}')
+  echo $(trim "$value")
+}
+
+getSectorSize() #EXPFUN [device]
+{
+  local image="$1"
+  local value=$(sfdisk -l "$image" | grep 'Sector size' | awk '{print $(NF-4)}')
+  echo $(trim "$value")
+}
+
+estimateBlocksAfterShrink() #EXPFUN [device]
+{
+  local device=$1  
+  local value=$(resize2fs -P $device 2>/dev/null | awk '{print $NF}')
+  echo $(trim "$value")
+}
+
+getLastPartitionNumber()
+{
+  local image="$1"
+  local value=$(parted --script "$image" print | grep "." | tail -1 | awk '{print $1}')
+  echo $value
+}
+
+getStartOffsets() #EXPFUN [device]
+{
+  local image="$1"
+  local typesExpr="$2"
+  
+  if [ -z "$typesExpr" ]; then
+    typesExpr="Linux"
+  fi
+  
+  local value=$(sfdisk -l -o Start,Type "$image" | grep "$typesExpr" | awk '{print $1}')
+  echo $value
+}
+
+getAvailableSpace() #EXPFUN [path]
+{
+  local path="$1"
+  local value=$(df -P "$path" | awk 'NR==2 {print $4}')
+  echo $value
+}
+
+getEndSector() #EXPFUN [image]
+{
+  local image="$1"
+  local value=$(sfdisk -o End -l "$image" | tail -1)
+  echo $(trim "$value")
+}
+
+getPathFsType() #EXPFUN [path]
+{
+  local path="$1"
+  local value=$(df -TP /tmp | tail -1 | awk '{print $2}')
+  echo $(trim "$value")
+}
+
+hasGptLayout() #EXPFUN [image]
+{
+  local image="$1"
+  if $(sfdisk -l "$image" 2>/dev/null | grep -q 'type: gpt'); then
+    echo true
+  else
+    echo false
+  fi
+}
+
+trim() {
+  local string="$*"
+  local string="${string#"${string%%[![:space:]]*}"}"
+  local string="${string%"${string##*[![:space:]]}"}"   
+  printf '%s' "$string"
+}
+
+
+#===========================================
+
+(return 0 2>/dev/null) || main "$@"
