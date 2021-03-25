@@ -8,7 +8,7 @@ VERSION=$(./ddarch --version | grep -Eo '[0-9.]+')
 PREFIX=${PACKAGE}_${VERSION}
 TMP_DIR=/tmp/${PACKAGE}_package
 OUT_DIR=./package
-PACKAGE_BRANCH=debian-debian
+PACKAGE_BRANCH=debian-package
 
 SRC_BRANCH=$(git branch | sed -n -e 's/^\* \(.*\)/\1/p')
 
