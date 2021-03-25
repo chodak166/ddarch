@@ -1,1 +1,2 @@
-ddarch usr/bin
+ddarch                      usr/bin
+bash-completion/ddarch      usr/share/bash-completion/completions
