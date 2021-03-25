@@ -2,17 +2,17 @@
 
 # Table of Contents
 
-1.  [Overview](#overview)  
+1. [Overview](#overview)  
 1.1. [Motivation](#motivation)  
 	1.2. [Main features](#main-features)  
-	1.3.  [Precautions](#precautions)  
-2.  [Quick start](#quick-start)  
-	2.1.  [Archiving](#archiving)  
-	2.2.  [Restoring](#restoring)  
-	2.3.  [Sourcing](#sourcing)  
-3.  [Installation](#installation)  
-4.  [Dependencies](#dependencies)  
-5.  [Usage](#usage)
+	1.3. [Precautions](#precautions)  
+2. [Quick start](#quick-start)  
+	2.1. [Archiving](#archiving)  
+	2.2. [Restoring](#restoring)  
+	2.3. [Sourcing](#sourcing)  
+3. [Installation](#installation)  
+4. [Dependencies](#dependencies)  
+5. [Usage](#usage)
 
 -----
 
@@ -56,13 +56,13 @@ Create an archive from a block device (sdx) with the default output name
 (clone, shrink, fill with zeroes, truncate, compress):
 
 ```
-ddarch -i /dev/sdx
+ddarch archive -i /dev/sdx
 ```
 
 which is the same as:
 
 ```
-ddarch archive -i /dev/sdx
+ddarch -i /dev/sdx
 ```
 Create ZIP archive from a block device (sdx) without resizing and truncating the output image:
 
