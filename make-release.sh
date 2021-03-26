@@ -47,6 +47,7 @@ git checkout $PACKAGE_BRANCH
 gbp import-orig $TMP_DIR/${PACKAGE}_${VERSION}.orig.tar.gz
 gbp buildpackage -us -uc \
   --git-ignore-new \
+  --git-arch=all \
   --git-builder='debuild -i -I -S' \
   --git-export-dir=$TMP_DIR
   
