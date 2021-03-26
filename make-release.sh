@@ -47,7 +47,7 @@ git checkout $PACKAGE_BRANCH
 gbp import-orig $TMP_DIR/${PACKAGE}_${VERSION}.orig.tar.gz
 gbp buildpackage -us -uc \
   --git-ignore-new \
-  --git-arch=all \
+  --git-arch='all' \
   --git-builder='debuild -i -I -S' \
   --git-export-dir=$TMP_DIR
   
@@ -55,4 +55,4 @@ mv $TMP_DIR $OUT_DIR
 
 echo "${OUT_DIR}: "
 ls -1 "${OUT_DIR}"
-echo "You can now sign the package with 'debsign -k <key> <package>.changes` 
+echo "You can now sign the package with 'debsign -k <key> <package>.changes'"
