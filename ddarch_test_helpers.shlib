@@ -1,0 +1,106 @@
+
+TEST_TMP_DIR=./test.tmp.$(date +%s)
+#TEST_TMP_CACHE_DIR=${TEST_TMP_DIR}_cache
+TEST_TMP_CACHE_DIR=test_cache
+TEST_MNT_DIR=/tmp/mnt.$(date +%s)
+TEST_BIN_FILENAME=testfile.bin
+TEST_BIN_FILE=$TEST_TMP_DIR/$TEST_BIN_FILENAME
+TEST_BIN_FILE_HASH=
+
+TEST_BASE_IMG_SIZE=10M
+TEST_MBR_PRI_IMAGE=$TEST_TMP_DIR/disk-10M-mbr-primary.img
+TEST_MBR_EXT_IMAGE=$TEST_TMP_DIR/disk-10M-mbr-extended.img
+TEST_GPT_PRI_IMAGE=$TEST_TMP_DIR/disk-10M-gpt-primary.img
+TEST_RESTORED_IMAGE=$TEST_TMP_DIR/restored-image.img
+
+TEST_RESTORED_IMAGE_SIZE=60MiB
+
+TEST_P1_OFFSET=2048
+TEST_P2_OFFSET=6144
+
+setupTestFiles()
+{
+  if [ -d "$TEST_MNT_DIR" ] && mountpoint -q "$TEST_MNT_DIR"; then
+    echo "${RED}$TEST_MNT_DIR already mounted, aborting${NC}"
+    exit 1
+  fi
+  
+  mkdir -p "$TEST_TMP_DIR" ||:
+  mkdir -p "$TEST_MNT_DIR" ||:
+
+  if [ -d "$TEST_TMP_CACHE_DIR" ]; then
+    cp -af "$TEST_TMP_CACHE_DIR"/* "$TEST_TMP_DIR"/
+  else
+    head -c 1M /dev/urandom > $TEST_BIN_FILE
+      
+    createMbrPriTestImage $TEST_MBR_PRI_IMAGE
+    formatAndPlaceTEST_BIN_FILE $TEST_MBR_PRI_IMAGE
+    
+    createGptPriTestImage $TEST_GPT_PRI_IMAGE
+    formatAndPlaceTEST_BIN_FILE $TEST_GPT_PRI_IMAGE
+    
+    createMbrExtTestImage $TEST_MBR_EXT_IMAGE
+    
+    cp -af "$TEST_TMP_DIR" "$TEST_TMP_CACHE_DIR"
+  fi
+  
+  TEST_BIN_FILE_HASH=$(md5sum $TEST_BIN_FILE | awk '{print $1}')
+}
+
+cleanUp()
+{
+  mountpoint -q "$TEST_MNT_DIR" && umount -f "$TEST_MNT_DIR"
+  rm -r "$TEST_TMP_DIR" "$TEST_TMP_CACHE_DIR" "$TEST_MNT_DIR"
+}
+
+createMbrPriTestImage()
+{
+  imgFile="$1"
+  head -c $TEST_BASE_IMG_SIZE /dev/urandom > "$imgFile"
+  
+  parted --script "$imgFile" mktable msdos
+  parted -a optimal --script "$imgFile" mkpart primary ext4 1MiB 3MiB
+  parted -a optimal --script "$imgFile" mkpart primary ext4 3MiB 8MiB
+}
+
+createMbrExtTestImage()
+{
+  imgFile="$1"
+  head -c $TEST_BASE_IMG_SIZE /dev/urandom > "$imgFile"
+  
+  parted --script "$imgFile" mktable msdos
+  parted -a optimal --script "$imgFile" mkpart primary ext4 1MiB 3MiB
+  parted -a optimal --script "$imgFile" mkpart extended 3MiB 8MiB
+  parted -a optimal --script "$imgFile" mkpart logical ext4 $((3*1024*1024+512))B 8MiB #>/dev/null 2>&1
+}
+
+createGptPriTestImage()
+{
+  imgFile="$1"
+  head -c $TEST_BASE_IMG_SIZE /dev/urandom > "$imgFile"
+  
+  parted --script "$imgFile" mktable gpt
+  parted -a optimal --script "$imgFile" mkpart primary ext4 1MiB 3MiB
+  parted -a optimal --script "$imgFile" mkpart primary ext4 3MiB 8MiB
+}
+
+formatAndPlaceTEST_BIN_FILE()
+{
+  imgFile="$1"
+  loDevice=$(losetup -f)
+  losetup -o 1MiB -L --partscan --sizelimit 2MiB $loDevice "$imgFile"
+  mke2fs -t ext4 $loDevice
+  losetup -d $loDevice
+  
+  fdisk -lu "$imgFile"
+  
+  losetup -o 3MiB -L --partscan --sizelimit 5MiB $loDevice "$imgFile"
+  mke2fs -t ext4 $loDevice
+  mount $loDevice $TEST_MNT_DIR
+  cp $TEST_BIN_FILE $TEST_MNT_DIR/
+  sync
+  umount $TEST_MNT_DIR
+  losetup -d $loDevice
+  
+  fdisk -lu "$imgFile"
+}

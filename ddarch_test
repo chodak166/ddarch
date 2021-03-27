@@ -1,102 +1,52 @@
 #!/bin/bash
 
-#set -x
-set -e
+# Run selected tests:
+# ddarch_test [t1 t2 ..]
+#
+# Run all tests:
+# ddarch_test
 
-RED='\033[0;31m'
-GREEN='\033[1;32m'
-NC='\033[0m' # No Color
+set -e 
+#set -x && PS4='- Line ${LINENO}: '
 
-. ddarch
+DDARCH_PATH=./ddarch
 
-testTmpDir=./test.tmp.$(date +%s)
-testMntDir=/tmp/mnt.$(date +%s)
-testBinFilename=testfile.bin
-testBinFile=$testTmpDir/$testBinFilename
-testBinFileHash=
+. "$DDARCH_PATH"
+. ddarch_test_helpers.shlib
+. test.shlib
 
-baseImgSize=10M
-imageMbrPriFile=$testTmpDir/disk-10M-mbr-primary.img
-imageMbrExtFile=$testTmpDir/disk-10M-mbr-extended.img
-imageGptPriFile=$testTmpDir/disk-10M-gpt-primary.img
-restoredImageFile=$testTmpDir/restored-image.img
-
-restoredImageSize=60MiB
-
-p1StartOffset=2048
-p2StartOffset=6144
-
-main()
+test_lastPartitionOffset()
 {
-  setup
-  runAllTests
-  cleanUp
+  setupTestFiles
   
-  echo -e "\n$GREEN "Done" $NC"
-}
-
-setup()
-{
-  mkdir -p "$testTmpDir"
-  mkdir -p "$testMntDir"
-  head -c 1M /dev/urandom > $testBinFile
-  testBinFileHash=$(md5sum $testBinFile | awk '{print $1}')
-  
-  createMbrPriTestImage $imageMbrPriFile
-  formatAndPlaceTestBinFile $imageMbrPriFile
-  
-  createGptPriTestImage $imageGptPriFile
-  formatAndPlaceTestBinFile $imageGptPriFile
-  
-  createMbrExtTestImage $imageMbrExtFile
-}
-
-
-cleanUp()
-{
-  rm -r $testTmpDir
-}
-
-
-runAllTests()
-{
-  quiet=true
-  testLastPartitionOffset
-  testLastPartitionSize
-  testShrinkLastPartition
-  testFillWithZeros
-  testMbrTruncate
-  testGptTruncate
-  testMbrRestore
-  testGptRestore
-}
-
-testLastPartitionOffset()
-{
-  offset=$(getLastPartitionOffset $imageMbrPriFile)
+  offset=$(getLastPartitionOffset $TEST_MBR_PRI_IMAGE)
   assertEqual $offset 6144 \
-    "The ${imageMbrPriFile}.img last partition offset should be 6144"
+    "The ${TEST_MBR_PRI_IMAGE}.img last partition offset should be 6144"
     
-  offset=$(getLastPartitionOffset $imageGptPriFile)
+  offset=$(getLastPartitionOffset $TEST_GPT_PRI_IMAGE)
   assertEqual $offset 6144 \
-    "The ${imageGptPriFile}.img last partition offset should be 6144"
+    "The ${TEST_GPT_PRI_IMAGE}.img last partition offset should be 6144"
 }
 
-testLastPartitionSize()
+test_lastPartitionSize()
 {
-  size=$(getLastPartitionSize $imageMbrPriFile)
+  setupTestFiles
+  
+  size=$(getLastPartitionSize $TEST_MBR_PRI_IMAGE)
   assertEqual $size 5242880 \
-    "The ${imageMbrPriFile}.img last partition size should be 5242880"
+    "The ${TEST_MBR_PRI_IMAGE}.img last partition size should be 5242880"
     
-  size=$(getLastPartitionSize $imageGptPriFile)
+  size=$(getLastPartitionSize $TEST_GPT_PRI_IMAGE)
   assertEqual $size 5242880 \
-    "The ${imageGptPriFile}.img last partition size should be 5242880"
+    "The ${TEST_GPT_PRI_IMAGE}.img last partition size should be 5242880"
 }
 
-testShrinkLastPartition()
+test_shrinkLastPartition()
 {
-  image=$imageMbrPriFile
-  imageBak=${imageMbrPriFile}.orig
+  setupTestFiles
+
+  image=$TEST_MBR_PRI_IMAGE
+  imageBak=${TEST_MBR_PRI_IMAGE}.orig
   cp "$image" "$imageBak"
   
   tailSize=0
@@ -105,7 +55,7 @@ testShrinkLastPartition()
   sizeAfter=$(getLastPartitionSize $image)
   
   assertGreater $sizeBefore $sizeAfter \
-    "The ${imageMbrPriFile}.img last partition size should be smaller after shrinking"
+    "The ${TEST_MBR_PRI_IMAGE}.img last partition size should be smaller after shrinking"
     
   cp -f "$imageBak" "$image"
   tailSize=$((1024 * 32))
@@ -114,40 +64,44 @@ testShrinkLastPartition()
   
   delta=$(($sizeAfterWithTail - $sizeAfter))
   assertEqual $tailSize $delta \
-    "The ${imageMbrPriFile}.img last partition size with tail should be accordingly bigger"
+    "The ${TEST_MBR_PRI_IMAGE}.img last partition size with tail should be accordingly bigger"
     
     
-  image=$imageGptPriFile
+  image=$TEST_GPT_PRI_IMAGE
   tailSize=0
   sizeBefore=$(getLastPartitionSize $image)
   shrinkLastPartition $image $tailSize
   sizeAfter=$(getLastPartitionSize $image)
   
   assertGreater $sizeBefore $sizeAfter \
-    "The ${imageGptPriFile}.img last partition size should be smaller after shrinking"
+    "The ${TEST_GPT_PRI_IMAGE}.img last partition size should be smaller after shrinking"
     
   #TODO: assert test file hash hasn't changed
 }
 
 #TODO: write sensible assertions
-testFillWithZeros()
+test_fillWithZeros()
 {
-  fillWithZeros $imageMbrPriFile
-  fillWithZeros $imageGptPriFile
+  setupTestFiles
+
+  fillWithZeros $TEST_MBR_PRI_IMAGE
+  fillWithZeros $TEST_GPT_PRI_IMAGE
 }
 
-testMbrTruncate()
+test_mbrTruncate()
 {
-  testTruncate $imageMbrPriFile
+  testTruncate $TEST_MBR_PRI_IMAGE
 }
 
-testGptTruncate()
+test_gptTruncate()
 {
-  testTruncate $imageGptPriFile
+  testTruncate $TEST_GPT_PRI_IMAGE
 }
 
 testTruncate()
 {
+  setupTestFiles
+
   image=$1
   imgSizeBefore=$(stat --printf="%s" $image)
   truncateImage $image 0
@@ -156,139 +110,99 @@ testTruncate()
   assertGreater $imgSizeBefore $imgSizeAfter "The size of the image after truncation should be smaller than before"
   
   sectorSize=$(getSectorSize $image) 
-  mount -o offset=$(($p2StartOffset * $sectorSize)) $image $testMntDir
-  mountedTestFileHash=$(md5sum $testMntDir/$testBinFilename | awk '{print $1}')
-  umount $testMntDir
+  mount -o offset=$(($TEST_P2_OFFSET * $sectorSize)) $image $TEST_MNT_DIR
+  mountedTestFileHash=$(md5sum $TEST_MNT_DIR/$TEST_BIN_FILENAME | awk '{print $1}')
+  umount $TEST_MNT_DIR
   
-  assertEqual $testBinFileHash $mountedTestFileHash "Original test file hash and the one from the image should be the same"
+  assertEqual $TEST_BIN_FILE_HASH $mountedTestFileHash "Original test file hash and the one from the image should be the same"
 }
 
-testMbrRestore()
+test_mbrRestore()
 {
-  testRestore $imageMbrPriFile
+  testRestore $TEST_MBR_PRI_IMAGE
 }
 
-testGptRestore()
+test_gptRestore()
 {
-  testRestore $imageGptPriFile
+  testRestore $TEST_GPT_PRI_IMAGE
 }
 
 testRestore()
 {
+  setupTestFiles
+
   srcImage=$1
-  head -c $restoredImageSize /dev/urandom > $restoredImageFile
+  head -c $TEST_RESTORED_IMAGE_SIZE /dev/urandom > $TEST_RESTORED_IMAGE
   
-  loDevice=$(losetup --show -f $restoredImageFile) && \
+  loDevice=$(losetup --show -f $TEST_RESTORED_IMAGE) && \
   restoreImage $srcImage $loDevice
   
   losetup -d $loDevice
   
-  size=$(getLastPartitionSize $restoredImageFile)
+  size=$(getLastPartitionSize $TEST_RESTORED_IMAGE)
   
   assertEqual $size 58769408 "Restored partition size should be 58769408"
 }
 
-createMbrPriTestImage()
+test_cliArchiveExplicitOutputZip()
 {
-  imgFile="$1"
-  head -c $baseImgSize /dev/urandom > "$imgFile"
+  setupTestFiles
+  local output=$TEST_TMP_DIR/gpt_pri_out.zip
   
-  parted --script "$imgFile" mktable msdos
-  parted -a optimal --script "$imgFile" mkpart primary ext4 1MiB 3MiB
-  parted -a optimal --script "$imgFile" mkpart primary ext4 3MiB 8MiB
-}
-
-createMbrExtTestImage()
-{
-  imgFile="$1"
-  head -c $baseImgSize /dev/urandom > "$imgFile"
+  "$DDARCH_PATH" --input $TEST_GPT_PRI_IMAGE \
+    --output $output \
+    --arch-type zip \
+    --quiet
+    
+  local mimeType=$(getMimeType $output)
   
-  parted --script "$imgFile" mktable msdos
-  parted -a optimal --script "$imgFile" mkpart primary ext4 1MiB 3MiB
-  parted -a optimal --script "$imgFile" mkpart extended 3MiB 8MiB
-  parted -a optimal --script "$imgFile" mkpart logical ext4 $((3*1024*1024+512))B 8MiB #>/dev/null 2>&1
+  assertEqual $mimeType "application/zip;" "Archived output MIME type should be application/zip"
 }
 
-createGptPriTestImage()
+test_cliArchiveEmptyWorkDir()
 {
-  imgFile="$1"
-  head -c $baseImgSize /dev/urandom > "$imgFile"
+  setupTestFiles
+  local output=$TEST_TMP_DIR/gpt_pri_out.img
+  local workDir=$TEST_TMP_DIR/empty_work_dir
   
-  parted --script "$imgFile" mktable gpt
-  parted -a optimal --script "$imgFile" mkpart primary ext4 1MiB 3MiB
-  parted -a optimal --script "$imgFile" mkpart primary ext4 3MiB 8MiB
-}
-
-formatAndPlaceTestBinFile()
-{
-  imgFile="$1"
-  loDevice=$(losetup -f)
-  losetup -o 1MiB -L --partscan --sizelimit 2MiB $loDevice "$imgFile"
-  mke2fs -t ext4 $loDevice
-  losetup -d $loDevice
+  "$DDARCH_PATH" --input $TEST_GPT_PRI_IMAGE \
+    --output $output \
+    --arch-type none \
+    --work-dir $workDir \
+    --quiet
+    
+  local mimeType=$(getMimeType $output)
+  test -d $workDir && wdExists=true || wdExists=false
   
-  fdisk -lu "$imgFile"
+  assertEqual $wdExists false "Work directory should be deleted if empty"
+}
+
+test_cliArchiveNonEmptyWorkDir()
+{
+  setupTestFiles
+  local output=$TEST_TMP_DIR/gpt_pri_out.img
+  local workDir=$TEST_TMP_DIR/non_empty_work_dir
+  local foreignFile=$workDir/pre_existing_file.dat
+  mkdir -p $workDir
+  touch $foreignFile
   
-  losetup -o 3MiB -L --partscan --sizelimit 5MiB $loDevice "$imgFile"
-  mke2fs -t ext4 $loDevice
-  mount $loDevice $testMntDir
-  cp $testBinFile $testMntDir/
-  sync
-  umount $testMntDir
-  losetup -d $loDevice
+  "$DDARCH_PATH" --input $TEST_GPT_PRI_IMAGE \
+    --output $output \
+    --arch-type none \
+    --work-dir $workDir \
+    --yes \
+    --quiet
+    
+  mimeType=$(getMimeType $output)
+  test -f $foreignFile && ffExists=true || ffExists=false
   
-  fdisk -lu "$imgFile"
-}
-
-
-assertEqual()
-{
-  local lhs=$1
-  local rhs=$2
-  local msg=$3
-  if [[ "$lhs" == "$rhs" ]]; then
-      echo -e "$GREEN PASSED$NC ($msg)"
-  else
-      echo -e "$RED FAILED (\"$lhs\" is not \"$rhs\"): $msg$NC"
-  fi
-}
-
-assertGreater()
-{
-  local lhs=$1
-  local rhs=$2
-  local msg=$3
-  if [[ "$lhs" -gt "$rhs" ]]; then
-      echo -e "$GREEN PASSED$NC ($msg)"
-  else
-      echo -e "$RED FAILED (\"$lhs\" is not greater than \"$rhs\"): $msg$NC"
-  fi
-}
-
-assertGreaterEqual()
-{
-  local lhs=$1
-  local rhs=$2
-  local msg=$3
-  if [[ "$lhs" -ge "$rhs" ]]; then
-      echo -e "$GREEN PASSED$NC ($msg)"
-  else
-      echo -e "$RED FAILED (\"$lhs\" is not \"$rhs\"): $msg$NC"
-  fi
-}
-
-assertEqualContents()
-{
-  local lhs=$1
-  local rhs=$2
-  if cmp --silent $1 $2; then
-      echo -e "$GREEN PASSED$NC ($lhs is the same as $rhs)"
-  else
-      echo -e "$RED FAILED (\"$lhs\" is not the same as \"$rhs\")$NC"
-  fi
+  assertEqual $ffExists true "Work directory should not be deleted and foreign file should be spared"
 }
 
 
 # -------------
 
-main $@
+#trap cleanUp EXIT
+quiet=true
+runTests "$@"
+
