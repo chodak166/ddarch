@@ -477,9 +477,9 @@ assertRoot()
 getInputType()
 {
   fileType=$(getMimetype "$input")
-  if [[ "$fileType" == "inode/blockdevice;" ]]; then
+  if [[ "$fileType" == "inode/blockdevice" ]]; then
     echo "device"
-  elif [[ "$fileType" == "application/octet-stream;" ]]; then
+  elif [[ "$fileType" == "application/octet-stream" ]]; then
     echo "image"
   else
     echo $fileType
@@ -595,7 +595,7 @@ shrinkLastPartition() #EXPFUN [image] [tail size]
   
   isExt=$(isLastPartitionExt "$image")
   if [ $isExt = false ]; then
-    wlog "Last partition does not look like Linux EXT partition; shrinking skipped"
+    wlog "Last partition does not look like Linux EXT partition, shrinking skipped"
     return
   fi
   
@@ -704,11 +704,11 @@ restoreImage()  #EXPFUN [image] [device] [skip resizepart (true/false)]
   
   case $imageExtension in
     ('7z'|'7zip')
-      execCmd 7z e -so "$image" | dd of=$device status=progress $ddArgs;;
+      execCmd "7z e -so \"$image\" | dd of=$device status=progress $ddArgs";;
     ('zip')
-      execCmd unzip -p "$image" | dd of=$device status=progress $ddArgs;;
+      execCmd "unzip -p \"$image\" | dd of=$device status=progress $ddArgs";;
     ('tgz'|'gz'|'tar')
-      execCmd tar -xOf "$image" | dd of=$device status=progress $ddArgs;;
+      execCmd "tar -xOf \"$image\" | dd of=$device status=progress $ddArgs";;
     (*)
       execCmd dd if="$image" of=$device status=progress $ddArgs;;
   esac
@@ -813,7 +813,7 @@ getMimeType() #EXPFUN [file]
 {
   local file="$1"
   local value=$(file -N -b -i "$file" | awk '{print $1}')
-  echo $(trim "$value")
+  echo $(trim "${value%;}")
 }
 
 trim() {

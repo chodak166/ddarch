@@ -1,7 +1,7 @@
 
 TEST_TMP_DIR=./test.tmp.$(date +%s)
-#TEST_TMP_CACHE_DIR=${TEST_TMP_DIR}_cache
-TEST_TMP_CACHE_DIR=test_cache
+TEST_TMP_CACHE_DIR=${TEST_TMP_DIR}_cache
+#TEST_TMP_CACHE_DIR=test_cache
 TEST_MNT_DIR=/tmp/mnt.$(date +%s)
 TEST_BIN_FILENAME=testfile.bin
 TEST_BIN_FILE=$TEST_TMP_DIR/$TEST_BIN_FILENAME
@@ -32,7 +32,6 @@ setupTestFiles()
     cp -af "$TEST_TMP_CACHE_DIR"/* "$TEST_TMP_DIR"/
   else
     head -c 1M /dev/urandom > $TEST_BIN_FILE
-      
     createMbrPriTestImage $TEST_MBR_PRI_IMAGE
     formatAndPlaceTEST_BIN_FILE $TEST_MBR_PRI_IMAGE
     
@@ -41,6 +40,8 @@ setupTestFiles()
     
     createMbrExtTestImage $TEST_MBR_EXT_IMAGE
     
+    head -c $TEST_RESTORED_IMAGE_SIZE /dev/urandom > $TEST_RESTORED_IMAGE
+
     cp -af "$TEST_TMP_DIR" "$TEST_TMP_CACHE_DIR"
   fi
   
@@ -55,7 +56,7 @@ cleanUp()
 
 createMbrPriTestImage()
 {
-  imgFile="$1"
+  local imgFile="$1"
   head -c $TEST_BASE_IMG_SIZE /dev/urandom > "$imgFile"
   
   parted --script "$imgFile" mktable msdos
@@ -65,7 +66,7 @@ createMbrPriTestImage()
 
 createMbrExtTestImage()
 {
-  imgFile="$1"
+  local imgFile="$1"
   head -c $TEST_BASE_IMG_SIZE /dev/urandom > "$imgFile"
   
   parted --script "$imgFile" mktable msdos
@@ -76,7 +77,7 @@ createMbrExtTestImage()
 
 createGptPriTestImage()
 {
-  imgFile="$1"
+  local imgFile="$1"
   head -c $TEST_BASE_IMG_SIZE /dev/urandom > "$imgFile"
   
   parted --script "$imgFile" mktable gpt
@@ -86,8 +87,8 @@ createGptPriTestImage()
 
 formatAndPlaceTEST_BIN_FILE()
 {
-  imgFile="$1"
-  loDevice=$(losetup -f)
+  local imgFile="$1"
+  local loDevice=$(losetup -f)
   losetup -o 1MiB -L --partscan --sizelimit 2MiB $loDevice "$imgFile"
   mke2fs -t ext4 $loDevice
   losetup -d $loDevice
