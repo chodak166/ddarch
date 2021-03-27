@@ -9,7 +9,7 @@
 set -e 
 #set -x && PS4='- Line ${LINENO}: '
 
-DDARCH_PATH=$(readlink -e ./ddarch)
+DDARCH_PATH=$(readlink -e ../ddarch)
 
 . "$DDARCH_PATH"
 . ddarch_test_helpers.shlib
