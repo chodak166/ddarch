@@ -272,7 +272,7 @@ run()
   case $commandName in
     ('archive')
       assertProperArchType
-      test -z "$output" && setupOutputName
+      setupOutputName
       assertNoTmpfsTemp
       assertNoOutputFile
       archiveImageOrDevice;;
@@ -296,8 +296,8 @@ cleanup()
     umount -f $tmpMountDir
   fi
   
-  test -d $tmpWorkDir && rm -r $tmpWorkDir
-  test -d $tmpMountDir && rmdir $tmpMountDir
+  if [ ! "$(ls -A $tmpWorkDir)" ]; then rmdir $tmpWorkDir; fi
+  if [ ! "$(ls -A $tmpMountDir)" ]; then rmdir $tmpMountDir; fi
 }
 
 assertProperArchType()
@@ -344,22 +344,26 @@ assertNoTmpfsTemp()
 
 setupOutputName() 
 {
-  output="$PWD/"$(date +%Y-%m-%d)"-${outputBaseName}".img
-  unarchivedOutput="$output"
-  
-  case $archType in
-    ('7z')
-      output=${output}.7z;;
-    ('zip')
-      output=${output}.zip;;
-    ('tgz'|'tar.gz'|'tar')
-      output=${output}.tar.gz;;
-    ('none')
-      :;;
-    (*)
-      elog "Unknown archive type: $archType"
-      exit 1
-  esac
+  if [ -z "$output" ]; then
+    output="$PWD/"$(date +%Y-%m-%d)"-${outputBaseName}".img
+    unarchivedOutput="$output"
+    
+    case $archType in
+      ('7z')
+        output=${output}.7z;;
+      ('zip')
+        output=${output}.zip;;
+      ('tgz'|'tar.gz'|'tar')
+        output=${output}.tar.gz;;
+      ('none')
+        :;;
+      (*)
+        elog "Unknown archive type: $archType"
+        exit 1
+    esac
+  else
+    unarchivedOutput="${output%@(.tar.gz|.zip|.7z)}"
+  fi
 }
 
 archiveImageOrDevice()
@@ -376,6 +380,7 @@ archiveImageOrDevice()
     
     local imageFile="$input"
   else
+    local outFilename=
     imageFile="$tmpWorkDir"/$(basename "$unarchivedOutput")
     dd if="$input" of="$imageFile" status=progress $ddArgs
   fi
@@ -471,7 +476,7 @@ assertRoot()
 
 getInputType()
 {
-  fileType=$(file -N -i "$input" | awk '{print $2}')
+  fileType=$(getMimetype "$input")
   if [[ "$fileType" == "inode/blockdevice;" ]]; then
     echo "device"
   elif [[ "$fileType" == "application/octet-stream;" ]]; then
@@ -629,7 +634,7 @@ fillWithZeros()  #EXPFUN [image]
   local offsets=( $(getStartOffsets "$image") )
   for offset in "${offsets[@]}"
   do
-    ilog "Filling image partition (offset: $offset) with zeroes quiet: $quiet"
+    ilog "Filling image partition (offset: $offset) with zeroes"
     
     local offsetBytes=$(($sectorSize * $offset))
     loDevice=$(losetup -f)
@@ -802,6 +807,13 @@ hasGptLayout() #EXPFUN [image]
   else
     echo false
   fi
+}
+
+getMimeType() #EXPFUN [file]
+{
+  local file="$1"
+  local value=$(file -N -b -i "$file" | awk '{print $1}')
+  echo $(trim "$value")
 }
 
 trim() {
