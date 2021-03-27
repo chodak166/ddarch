@@ -10,7 +10,7 @@ Homepage: http://git.nixlab.in/chodak166/ddarch.git
 
 Package: ddarch
 Architecture: all
-Depends: coreutils (>= 8.25), parted (>= 3.2), fdisk, e2fsprogs, p7zip-full, zip, unzip, ${shlibs:Depends}, ${misc:Depends}
+Depends: coreutils (>= 8.25), parted (>= 3.2), mount, fdisk, e2fsprogs, p7zip-full, zip, unzip, ${shlibs:Depends}, ${misc:Depends}
 Description: dd helper script to easily create, preserve and restore disk images
  Ddarch is a simple helper script that wraps dd, fdisk, parted along
  with other tools to easily create, preserve and restore disk images.
