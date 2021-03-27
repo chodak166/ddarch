@@ -521,21 +521,25 @@ function confirm {
 
 ilog()
 {
+  [ $quiet = true ] && return 0
   echo -e $(date "+%Y-%m-%d %H:%M:%S")" INFO: $@"
 }
 
 wlog()
 {
+  [ $quiet = true ] && return 0
   echo -e $(date "+%Y-%m-%d %H:%M:%S")" WARNING: $@" 1>&2
 }
 
 elog()
 {
+  [ $quiet = true ] && return 0
   echo -e $(date "+%Y-%m-%d %H:%M:%S")" ${RED}ERROR: $@${NC}" 1>&2
 }
 
 vlog()
 {
+  [ $quiet = true ] && return 0
   if [ $verbose = true ]; then
     echo -e $(date "+%Y-%m-%d %H:%M:%S")" VER: $@"
   fi
@@ -625,7 +629,7 @@ fillWithZeros()  #EXPFUN [image]
   local offsets=( $(getStartOffsets "$image") )
   for offset in "${offsets[@]}"
   do
-    ilog "Filling image partition (offset: $offset) with zeroes"
+    ilog "Filling image partition (offset: $offset) with zeroes quiet: $quiet"
     
     local offsetBytes=$(($sectorSize * $offset))
     loDevice=$(losetup -f)
