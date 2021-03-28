@@ -50,8 +50,16 @@ setupTestFiles()
 
 cleanUp()
 {
+  retCode=$?
+  
   mountpoint -q "$TEST_MNT_DIR" && umount -f "$TEST_MNT_DIR"
   rm -r "$TEST_TMP_DIR" "$TEST_TMP_CACHE_DIR" "$TEST_MNT_DIR"
+  
+  if [ $retCode -eq 0 ]; then
+    echo -e "${GREEN}Done!${NC}"
+  else
+    echo -e "${RED}Finished with errors${NC}"
+  fi
 }
 
 createMbrPriTestImage()
