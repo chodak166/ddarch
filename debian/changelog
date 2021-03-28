@@ -1,3 +1,9 @@
+ddarch (0.1.3-2) bionic; urgency=medium
+
+  * Added missing package dependencies
+
+ -- chodak166 <chodak166@op.pl>  Sun, 28 Mar 2021 15:59:00 +0200
+
 ddarch (0.1.3-1) bionic; urgency=medium
 
   * Added safer cleanup after archiving
