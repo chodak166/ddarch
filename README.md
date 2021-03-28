@@ -154,6 +154,8 @@ The script uses tools from the following Debian packages:
 - `parted`
 - `fdisk`
 - `mount`
+- `file`
+- `gdisk`
 - `e2fsprogs`
 - `p7zip-full`, `zip`, `unzip` (optional)
 
