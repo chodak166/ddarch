@@ -10,7 +10,7 @@
 ## or:    $SCRIPT_FILENAME archive [options]
 ## or:    $SCRIPT_FILENAME restore [options]
 ##
-## A dd wrapper script with .img file archiving features.
+## ddarch is a simple helper tool that wraps multiple disk image management utilities to easily create, preserve and restore disk images. 
 ##
 ## Commands:
 ##
@@ -47,8 +47,8 @@
 ##   -V, --verbose                  print the commands being executed and additional information
 ##   -q, --quiet                    do not print any output
 ##   -y, --yes                      say yes to everything (non-interactive mode)
-##   -w, --work-dir [dir]               working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
-##   -D, --debug                        Run in debug mode
+##   -w, --work-dir [dir]           working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
+##   -D, --debug                    Run in debug mode
 ##   -f, --functions                List functions to be used after sourcing
 ##   -h, --help                     Display this message
 ##   -v, --version                  Display script version
