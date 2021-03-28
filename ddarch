@@ -53,7 +53,12 @@
 ##   -h, --help                     Display this message
 ##   -v, --version                  Display script version
 ##
-## 
+## *Limitations*
+##
+## - Archiving and extending MBR images with the last logical partition contained in the extended partition is not supported.
+##
+## - Archiving images containing physical LVM volumes is not fully supported. You can try archiving with the "--no-zero" parameter and manually managing the volumes after the restore.
+##
 ## *EXAMPLES*
 ##
 ## Create an archive from a block device (sdx) with the default output name
@@ -279,7 +284,6 @@ run()
       assertNoTmpfsTemp
       assertNoOutputFile
       archiveImageOrDevice;;
-      
     ('restore')
       test -z $output && elog "No output specified" && usage 1
       restoreArchiveOrImage;;
@@ -291,6 +295,8 @@ run()
 
 cleanup()
 {
+  retCode=$?
+  
   if [ ! -z $loDevice ] && findmnt -rno SOURCE,TARGET $loDevice >/dev/null; then
     losetup -d $loDevice
   fi
@@ -301,6 +307,14 @@ cleanup()
   
   if [ ! "$(ls -A $tmpWorkDir)" ]; then rmdir $tmpWorkDir; fi
   if [ ! "$(ls -A $tmpMountDir)" ]; then rmdir $tmpMountDir; fi
+  
+  if [ $retCode -eq 0 ]; then
+    ilog "Done!"
+  else
+    wlog "Finished with errors, try --verbose or --debug to investigate what went wrong"
+  fi
+  
+  exit $retCode
 }
 
 assertProperArchType()
