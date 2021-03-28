@@ -26,7 +26,7 @@
  [Back to top](#table-of-contents)
 
 ## Motivation
-Leaving aside the sparse files and their drawbacks, `dd` leaves you with an image equal in size to the size of the input media. Such an image may contain empty spaces, unpartitioned volumes, and be cumbersome to compress and store. Restoring an image to a device of a different size may also require appropriate modifications to the image (partition resizing, trimming) or the device itself after the restore (enlarging the last partition). This tool was created to make these steps a little easier.
+When sparse files are not in play, `dd` leaves you with an image equal in size to the size of the input media. Such an image may contain empty spaces, unpartitioned volumes, and be cumbersome to compress and store. Restoring an image to a device of a different size may also require appropriate modifications to the image (partition resizing, trimming) or the device itself after the restore (enlarging the last partition). This tool was created to make these steps a little easier.
 
  [Back to top](#table-of-contents)
 
