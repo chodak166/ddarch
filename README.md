@@ -179,8 +179,8 @@ Common options:
   -V, --verbose                  print the commands being executed and additional information
   -q, --quiet                    do not print any output
   -y, --yes                      say yes to everything (non-interactive mode)
-  --work-dir [dir]               working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
-  --debug                        Run in debug mode
+  -w, --work-dir [dir]               working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
+  -D, --debug                        Run in debug mode
   -f, --functions                List functions to be used after sourcing
   -h, --help                     Display this message
   -v, --version                  Display script version

@@ -4,16 +4,23 @@
 # See accompanying file LICENSE.txt or copy at
 # https://www.boost.org/LICENSE_1_0.txt for the full license.
 
-## $SCRIPT_NAME v$SCRIPT_VERSION
+## $SCRIPT_NAME $SCRIPT_VERSION
+##
+## Usage: $SCRIPT_FILENAME [options]
+## or:    $SCRIPT_FILENAME archive [options]
+## or:    $SCRIPT_FILENAME restore [options]
 ##
 ## A dd wrapper script with .img file archiving features.
-## 
-## Usage: $SCRIPT_FILENAME [command] [options]
 ##
 ## Commands:
 ##
-## archive [default]                shrink, truncate and compress image file; clone first if the input is a block device
-## Options:
+## archive (default) - shrink, truncate and compress image file; clone first if the input is a block device
+##
+## restore           - copy the image to the device and extend the last partition; decompress first if the input is an archive
+##
+## *OPTIONS*
+##
+## Archive options:
 ##   -i, --input [file]             input image file or block device
 ##   -o, --output [file]            output file, defaults to '<yyyy-mm-dd>-image.<ext>'
 ##   -d, --dd-args [string]         additional dd arguments
@@ -28,8 +35,7 @@
 ##   --mnt-dir [dir]                temporary mount location; defaults to /tmp/ddarch.mnt.<timestamp>
 ##
 ##
-## restore                          copy the image to the device and extend the last partition; decompress first if the input is an archive
-## Options:
+## Restore options:
 ##   -i, --input [file]             input .img file or an archive (tar.gz, tgz, zip, 7z)
 ##   -o, --output [device]          target block device
 ##   -d, --dd-args [string]         additional dd arguments
@@ -41,15 +47,15 @@
 ##   -V, --verbose                  print the commands being executed and additional information
 ##   -q, --quiet                    do not print any output
 ##   -y, --yes                      say yes to everything (non-interactive mode)
-##   --work-dir [dir]               working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
-##   --debug                        Run in debug mode
+##   -w, --work-dir [dir]               working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
+##   -D, --debug                        Run in debug mode
 ##   -f, --functions                List functions to be used after sourcing
 ##   -h, --help                     Display this message
 ##   -v, --version                  Display script version
 ##
 ## 
-## Examples (archiving):
-## 
+## *EXAMPLES*
+##
 ## Create an archive from a block device (sdx) with the default output name
 ## (clone, shrink, fill with zeroes, truncate, compress):
 ##
@@ -72,9 +78,6 @@
 ##
 ##   $SCRIPT_FILENAME -i my_image.img -o my_image_min.img --arch-type none --in-place
 ##
-##
-## Examples (restoring):
-## 
 ## Copy given image to the device, extend the last partition to the largest 
 ## possible size and verify the file system:
 ## 
@@ -176,7 +179,7 @@ readOptions()
       ('-h'|'--help')
         usage 0 2>&1;;
       ('-v'|'--version')
-        echo "$SCRIPT_NAME v$SCRIPT_VERSION"
+        echo "$SCRIPT_NAME $SCRIPT_VERSION"
         exit 0;;
       ('-i'|'--input')
         shift
@@ -215,13 +218,13 @@ readOptions()
         inPlace=true;;
       ('-y'|'--yes')
         allYes=true;;
-      ('--work-dir')
+      ('-w'|'--work-dir')
         shift
         tmpWorkDir="$1";;
       ('--mount-dir')
         shift
         tmpMountDir="$1";;
-      ('--debug')
+      ('-D'|'--debug')
         PS4='- Line ${LINENO}: '
         set -x;;
       ('-V'|'--verbose')
