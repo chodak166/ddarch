@@ -6,15 +6,18 @@ _ddarch_completions()
   local cur prev words cword
   _init_completion || return
 
-  local GENERIC_OPTIONS='
+  local INFO_OPTIONS='
+      --functions
+      --help
+      --version
+  '
+
+  local GLOBAL_OPTIONS='
       --verbose
       --quiet
       --yes
       --work-dir
       --debug
-      --functions
-      --help
-      --version
   '
   
   local CMD_ARCHIVE_OPTIONS='
@@ -57,13 +60,13 @@ _ddarch_completions()
   if [[ "$cur" == -* ]]; then
       case $command in
 	      archive)
-	        COMPREPLY=( $( compgen -W "$CMD_ARCHIVE_OPTIONS" -- "$cur" ) )
+	        COMPREPLY=( $( compgen -W "$CMD_ARCHIVE_OPTIONS $GLOBAL_OPTIONS" -- "$cur" ) )
           return 0;;
       	restore)
-      	  COMPREPLY=( $( compgen -W "$CMD_RESTORE_OPTIONS" -- "$cur" ) )
+      	  COMPREPLY=( $( compgen -W "$CMD_RESTORE_OPTIONS $GLOBAL_OPTIONS" -- "$cur" ) )
 	        return 0;;
 	      *)
-	        COMPREPLY=( $( compgen -W "$CMD_ARCHIVE_OPTIONS $GENERIC_OPTIONS" -- "$cur" ) )
+	        COMPREPLY=( $( compgen -W "$CMD_ARCHIVE_OPTIONS $GLOBAL_OPTIONS $INFO_OPTIONS" -- "$cur" ) )
           return 0;;
       esac
   fi

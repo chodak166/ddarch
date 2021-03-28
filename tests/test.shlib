@@ -1,0 +1,69 @@
+# Usage: source this file and call runTests functions to 
+# call all the 'test_' functions
+
+RED='\033[0;31m'
+GREEN='\033[1;32m'
+NC='\033[0m' # No Color
+
+runTests()
+{
+  if [ "$#" -ne 0 ]; then
+    testFunctions=( "$@" )
+  else
+    testSuite="$( cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )/$(basename "$0")"
+    testFunctions=( $(grep -Poi 'test_\w+(?=\(\))' "$testSuite") )  
+  fi
+    
+  for testFunction in "${testFunctions[@]}"
+  do
+    echo "Executing '$testFunction'"
+    $testFunction
+  done
+}
+
+assertEqual()
+{
+  local lhs=$1
+  local rhs=$2
+  local msg=$3
+  if [[ "$lhs" == "$rhs" ]]; then
+      echo -e "$GREEN PASSED$NC ($msg)"
+  else
+      echo -e "$RED FAILED (\"$lhs\" is not \"$rhs\"): $msg$NC"
+  fi
+}
+
+assertGreater()
+{
+  local lhs=$1
+  local rhs=$2
+  local msg=$3
+  if [[ "$lhs" -gt "$rhs" ]]; then
+      echo -e "$GREEN PASSED$NC ($msg)"
+  else
+      echo -e "$RED FAILED (\"$lhs\" is not greater than \"$rhs\"): $msg$NC"
+  fi
+}
+
+assertGreaterEqual()
+{
+  local lhs=$1
+  local rhs=$2
+  local msg=$3
+  if [[ "$lhs" -ge "$rhs" ]]; then
+      echo -e "$GREEN PASSED$NC ($msg)"
+  else
+      echo -e "$RED FAILED (\"$lhs\" is not \"$rhs\"): $msg$NC"
+  fi
+}
+
+assertEqualContents()
+{
+  local lhs=$1
+  local rhs=$2
+  if cmp --silent $1 $2; then
+      echo -e "$GREEN PASSED$NC ($lhs is the same as $rhs)"
+  else
+      echo -e "$RED FAILED (\"$lhs\" is not the same as \"$rhs\")$NC"
+  fi
+}
