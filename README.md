@@ -11,6 +11,9 @@
 	2.2. [Restoring](#restoring)  
 	2.3. [Sourcing](#sourcing)  
 3. [Installation](#installation)  
+  3.1. [Installing ddarch on Ubuntu](#installing-ddarch-on-ubuntu)  
+  3.2. [Manual installation](#manual-installation)  
+  3.3. [Releases](#releases)  
 4. [Dependencies](#dependencies)  
 5. [Usage](#usage)
 
@@ -18,17 +21,17 @@
 
 # Overview
 
-Ddarch is a simple helper script that wraps `dd`, `fdisk`, `parted` along with other tools to easily create, preserve and restore disk images. 
+**ddarch** is a simple helper tool that wraps `dd`, `fdisk`, `parted` along with other utilities to easily create, preserve and restore disk images. 
 
  [Back to top](#table-of-contents)
 
 ## Motivation
-Excluding sparse files (which have their drawbacks), `dd` leaves you with an image equal in size to the size of the input media. Such an image may contain empty spaces, unpartitioned volumes, and be cumbersome to compress and store. Restoring an image to a device of a different size may also require appropriate modifications to the image (partition resizing, trimming) or the device itself (enlarging the partition after restoring). This tool was created to make these steps a little easier.
+Leaving aside the sparse files and their drawbacks, `dd` leaves you with an image equal in size to the size of the input media. Such an image may contain empty spaces, unpartitioned volumes, and be cumbersome to compress and store. Restoring an image to a device of a different size may also require appropriate modifications to the image (partition resizing, trimming) or the device itself after the restore (enlarging the last partition). This tool was created to make these steps a little easier.
 
  [Back to top](#table-of-contents)
 
 ## Main features
-Ddarch may help you with:
+**ddarch** may help you with:
 
 - creating a disk image with dd;
 - truncating unpartitioned space at the end of an image;
@@ -106,7 +109,7 @@ ddarch restore -i my_image.img.7z -o /dev/sdx --no-extend
  [Back to top](#table-of-contents)
 
 ## Sourcing
-Ddarch offers several flags to customize the overall process. However, it can be helpful to simply call individual functions from other scripts or interactively from the command line. You can import all functions by executing:
+**ddarch** offers several flags to customize the overall process. However, it can be helpful to simply call individual functions from other scripts or interactively from the command line. You can import all functions by executing:
 ```
 source ddarch
 ```
@@ -120,10 +123,31 @@ See `ddarch --functions` to learn more.
  [Back to top](#table-of-contents)
 
 # Installation
-> TODO
+## Installing ddarch on Ubuntu
+
+Ubuntu builds are available to install via the PPA:
+
+```
+sudo add-apt-repository ppa:chodak166/ppa
+sudo apt-get update
+sudo apt-get install ddarch
+```
+
+## Manual installation
+
+The very minimum you truly need is to place the `ddarch` file from this repository in any of your `$PATH` directories (e.g. `/usr/bin`). Don't forget to make sure you have all [dependencies](#dependencies) installed.
+
+Additionally, you can put the bash completion script from the `bash-completion` directory in `/usr/share/bash-completion/completions/`.
+
+The man pages can be found on the `debian-package` branch.
 
  [Back to top](#table-of-contents)
 
+## Releases
+The packages and source code for each release can also be downloaded from [this release page](https://github.com/chodak166/ddarch/releases).
+
+ [Back to top](#table-of-contents)
+ 
 # Dependencies
 The script uses tools from the following Debian packages:
 
@@ -131,6 +155,7 @@ The script uses tools from the following Debian packages:
 - `coreutils` (dd, head, tail, etc.)
 - `parted`
 - `fdisk`
+- `mount`
 - `e2fsprogs`
 - `p7zip-full`, `zip`, `unzip` (optional)
 
@@ -179,11 +204,15 @@ Common options:
   -V, --verbose                  print the commands being executed and additional information
   -q, --quiet                    do not print any output
   -y, --yes                      say yes to everything (non-interactive mode)
-  --work-dir [dir]               working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
-  --debug                        Run in debug mode
+  -w, --work-dir [dir]           working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
+  -D, --debug                    Run in debug mode
   -f, --functions                List functions to be used after sourcing
   -h, --help                     Display this message
   -v, --version                  Display script version
 ```
 
+# Limitations
+
+ - Archiving and extending MBR images with the last logical partition contained in the extended partition is not supported.
+ - Archiving images containing physical LVM volumes is not fully supported. You can try archiving with the "--no-zero" parameter and manually managing the volumes after the restore.
 

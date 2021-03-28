@@ -4,16 +4,23 @@
 # See accompanying file LICENSE.txt or copy at
 # https://www.boost.org/LICENSE_1_0.txt for the full license.
 
-## $SCRIPT_NAME v$SCRIPT_VERSION
+## $SCRIPT_NAME $SCRIPT_VERSION
 ##
-## A dd wrapper script with .img file archiving features.
-## 
-## Usage: $SCRIPT_FILENAME [command] [options]
+## Usage: $SCRIPT_FILENAME [options]
+## or:    $SCRIPT_FILENAME archive [options]
+## or:    $SCRIPT_FILENAME restore [options]
+##
+## ddarch is a simple helper tool that wraps multiple disk image management utilities to easily create, preserve and restore disk images. 
 ##
 ## Commands:
 ##
-## archive [default]                shrink, truncate and compress image file; clone first if the input is a block device
-## Options:
+## archive (default) - shrink, truncate and compress image file; clone first if the input is a block device
+##
+## restore           - copy the image to the device and extend the last partition; decompress first if the input is an archive
+##
+## *OPTIONS*
+##
+## Archive options:
 ##   -i, --input [file]             input image file or block device
 ##   -o, --output [file]            output file, defaults to '<yyyy-mm-dd>-image.<ext>'
 ##   -d, --dd-args [string]         additional dd arguments
@@ -28,8 +35,7 @@
 ##   --mnt-dir [dir]                temporary mount location; defaults to /tmp/ddarch.mnt.<timestamp>
 ##
 ##
-## restore                          copy the image to the device and extend the last partition; decompress first if the input is an archive
-## Options:
+## Restore options:
 ##   -i, --input [file]             input .img file or an archive (tar.gz, tgz, zip, 7z)
 ##   -o, --output [device]          target block device
 ##   -d, --dd-args [string]         additional dd arguments
@@ -41,15 +47,20 @@
 ##   -V, --verbose                  print the commands being executed and additional information
 ##   -q, --quiet                    do not print any output
 ##   -y, --yes                      say yes to everything (non-interactive mode)
-##   --work-dir [dir]               working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
-##   --debug                        Run in debug mode
+##   -w, --work-dir [dir]           working directory for temporary files; defaults to /tmp/ddarch.<timestamp>
+##   -D, --debug                    Run in debug mode
 ##   -f, --functions                List functions to be used after sourcing
 ##   -h, --help                     Display this message
 ##   -v, --version                  Display script version
 ##
-## 
-## Examples (archiving):
-## 
+## *Limitations*
+##
+## - Archiving and extending MBR images with the last logical partition contained in the extended partition is not supported.
+##
+## - Archiving images containing physical LVM volumes is not fully supported. You can try archiving with the "--no-zero" parameter and manually managing the volumes after the restore.
+##
+## *EXAMPLES*
+##
 ## Create an archive from a block device (sdx) with the default output name
 ## (clone, shrink, fill with zeroes, truncate, compress):
 ##
@@ -72,9 +83,6 @@
 ##
 ##   $SCRIPT_FILENAME -i my_image.img -o my_image_min.img --arch-type none --in-place
 ##
-##
-## Examples (restoring):
-## 
 ## Copy given image to the device, extend the last partition to the largest 
 ## possible size and verify the file system:
 ## 
@@ -90,7 +98,7 @@
 
 SCRIPT_NAME=ddarch
 SCRIPT_FILENAME=$(basename "$0")
-SCRIPT_VERSION=0.1.2
+SCRIPT_VERSION=0.1.3
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 set -e          # exit on command errors (so you MUST handle exit codes properly!)
@@ -176,7 +184,7 @@ readOptions()
       ('-h'|'--help')
         usage 0 2>&1;;
       ('-v'|'--version')
-        echo "$SCRIPT_NAME v$SCRIPT_VERSION"
+        echo "$SCRIPT_NAME $SCRIPT_VERSION"
         exit 0;;
       ('-i'|'--input')
         shift
@@ -215,13 +223,13 @@ readOptions()
         inPlace=true;;
       ('-y'|'--yes')
         allYes=true;;
-      ('--work-dir')
+      ('-w'|'--work-dir')
         shift
         tmpWorkDir="$1";;
       ('--mount-dir')
         shift
         tmpMountDir="$1";;
-      ('--debug')
+      ('-D'|'--debug')
         PS4='- Line ${LINENO}: '
         set -x;;
       ('-V'|'--verbose')
@@ -272,11 +280,10 @@ run()
   case $commandName in
     ('archive')
       assertProperArchType
-      test -z "$output" && setupOutputName
+      setupOutputName
       assertNoTmpfsTemp
       assertNoOutputFile
       archiveImageOrDevice;;
-      
     ('restore')
       test -z $output && elog "No output specified" && usage 1
       restoreArchiveOrImage;;
@@ -288,6 +295,8 @@ run()
 
 cleanup()
 {
+  retCode=$?
+  
   if [ ! -z $loDevice ] && findmnt -rno SOURCE,TARGET $loDevice >/dev/null; then
     losetup -d $loDevice
   fi
@@ -296,8 +305,16 @@ cleanup()
     umount -f $tmpMountDir
   fi
   
-  test -d $tmpWorkDir && rm -r $tmpWorkDir
-  test -d $tmpMountDir && rmdir $tmpMountDir
+  if [ ! "$(ls -A $tmpWorkDir)" ]; then rmdir $tmpWorkDir; fi
+  if [ ! "$(ls -A $tmpMountDir)" ]; then rmdir $tmpMountDir; fi
+  
+  if [ $retCode -eq 0 ]; then
+    ilog "Done!"
+  else
+    wlog "Finished with errors, try --verbose or --debug to investigate what went wrong"
+  fi
+  
+  exit $retCode
 }
 
 assertProperArchType()
@@ -344,22 +361,26 @@ assertNoTmpfsTemp()
 
 setupOutputName() 
 {
-  output="$PWD/"$(date +%Y-%m-%d)"-${outputBaseName}".img
-  unarchivedOutput="$output"
-  
-  case $archType in
-    ('7z')
-      output=${output}.7z;;
-    ('zip')
-      output=${output}.zip;;
-    ('tgz'|'tar.gz'|'tar')
-      output=${output}.tar.gz;;
-    ('none')
-      :;;
-    (*)
-      elog "Unknown archive type: $archType"
-      exit 1
-  esac
+  if [ -z "$output" ]; then
+    output="$PWD/"$(date +%Y-%m-%d)"-${outputBaseName}".img
+    unarchivedOutput="$output"
+    
+    case $archType in
+      ('7z')
+        output=${output}.7z;;
+      ('zip')
+        output=${output}.zip;;
+      ('tgz'|'tar.gz'|'tar')
+        output=${output}.tar.gz;;
+      ('none')
+        :;;
+      (*)
+        elog "Unknown archive type: $archType"
+        exit 1
+    esac
+  else
+    unarchivedOutput="${output%@(.tar.gz|.zip|.7z)}"
+  fi
 }
 
 archiveImageOrDevice()
@@ -376,6 +397,7 @@ archiveImageOrDevice()
     
     local imageFile="$input"
   else
+    local outFilename=
     imageFile="$tmpWorkDir"/$(basename "$unarchivedOutput")
     dd if="$input" of="$imageFile" status=progress $ddArgs
   fi
@@ -471,10 +493,10 @@ assertRoot()
 
 getInputType()
 {
-  fileType=$(file -N -i "$input" | awk '{print $2}')
-  if [[ "$fileType" == "inode/blockdevice;" ]]; then
+  fileType=$(getMimetype "$input")
+  if [[ "$fileType" == "inode/blockdevice" ]]; then
     echo "device"
-  elif [[ "$fileType" == "application/octet-stream;" ]]; then
+  elif [[ "$fileType" == "application/octet-stream" ]]; then
     echo "image"
   else
     echo $fileType
@@ -521,21 +543,25 @@ function confirm {
 
 ilog()
 {
+  [ $quiet = true ] && return 0
   echo -e $(date "+%Y-%m-%d %H:%M:%S")" INFO: $@"
 }
 
 wlog()
 {
+  [ $quiet = true ] && return 0
   echo -e $(date "+%Y-%m-%d %H:%M:%S")" WARNING: $@" 1>&2
 }
 
 elog()
 {
+  [ $quiet = true ] && return 0
   echo -e $(date "+%Y-%m-%d %H:%M:%S")" ${RED}ERROR: $@${NC}" 1>&2
 }
 
 vlog()
 {
+  [ $quiet = true ] && return 0
   if [ $verbose = true ]; then
     echo -e $(date "+%Y-%m-%d %H:%M:%S")" VER: $@"
   fi
@@ -586,7 +612,7 @@ shrinkLastPartition() #EXPFUN [image] [tail size]
   
   isExt=$(isLastPartitionExt "$image")
   if [ $isExt = false ]; then
-    wlog "Last partition does not look like Linux EXT partition; shrinking skipped"
+    wlog "Last partition does not look like Linux EXT partition, shrinking skipped"
     return
   fi
   
@@ -695,11 +721,11 @@ restoreImage()  #EXPFUN [image] [device] [skip resizepart (true/false)]
   
   case $imageExtension in
     ('7z'|'7zip')
-      execCmd 7z e -so "$image" | dd of=$device status=progress $ddArgs;;
+      execCmd "7z e -so \"$image\" | dd of=$device status=progress $ddArgs";;
     ('zip')
-      execCmd unzip -p "$image" | dd of=$device status=progress $ddArgs;;
+      execCmd "unzip -p \"$image\" | dd of=$device status=progress $ddArgs";;
     ('tgz'|'gz'|'tar')
-      execCmd tar -xOf "$image" | dd of=$device status=progress $ddArgs;;
+      execCmd "tar -xOf \"$image\" | dd of=$device status=progress $ddArgs";;
     (*)
       execCmd dd if="$image" of=$device status=progress $ddArgs;;
   esac
@@ -798,6 +824,13 @@ hasGptLayout() #EXPFUN [image]
   else
     echo false
   fi
+}
+
+getMimeType() #EXPFUN [file]
+{
+  local file="$1"
+  local value=$(file -N -b -i "$file" | awk '{print $1}')
+  echo $(trim "${value%;}")
 }
 
 trim() {
