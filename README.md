@@ -139,8 +139,6 @@ The very minimum you truly need is to place the `ddarch` file from this reposito
 
 Additionally, you can put the bash completion script from the `bash-completion` directory in `/usr/share/bash-completion/completions/`.
 
-The man pages can be found on the `debian-package` branch.
-
  [Back to top](#table-of-contents)
 
 ## Releases
