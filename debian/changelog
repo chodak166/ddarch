@@ -1,3 +1,13 @@
+ddarch (0.1.3-1) bionic; urgency=medium
+
+  * Added safer cleanup after archiving
+  * Updated bash completion
+  * Fixed quiet mode when sourcing
+  * Added -w and -D options
+  * Added man pages
+
+ -- chodak166 <chodak166@op.pl>  Sat, 28 Mar 2021 14:35:30 +0200
+
 ddarch (0.1.2-1) bionic; urgency=medium
 
   * Added bash completion script
