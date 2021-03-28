@@ -16,6 +16,7 @@
   3.3. [Releases](#releases)  
 4. [Dependencies](#dependencies)  
 5. [Usage](#usage)
+6. [Limitations](#limitations)
 
 -----
 
@@ -216,3 +217,4 @@ Common options:
  - Archiving and extending MBR images with the last logical partition contained in the extended partition is not supported.
  - Archiving images containing physical LVM volumes is not fully supported. You can try archiving with the "--no-zero" parameter and manually managing the volumes after the restore.
 
+ [Back to top](#table-of-contents)
