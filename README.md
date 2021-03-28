@@ -13,6 +13,7 @@
 3. [Installation](#installation)  
   3.1. [Installing ddarch on Ubuntu](#installing-ddarch-on-ubuntu)  
   3.2. [Manual installation](#manual-installation)  
+  3.3. [Releases](#releases)  
 4. [Dependencies](#dependencies)  
 5. [Usage](#usage)
 
@@ -142,6 +143,11 @@ The man pages can be found on the `debian-package` branch.
 
  [Back to top](#table-of-contents)
 
+## Releases
+The packages and source code for each release can also be downloaded from [this release page](https://github.com/chodak166/ddarch/releases).
+
+ [Back to top](#table-of-contents)
+ 
 # Dependencies
 The script uses tools from the following Debian packages:
 
