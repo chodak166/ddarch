@@ -10,7 +10,7 @@ Vcs-Browser: https://github.com/chodak166/ddarch
 
 Package: ddarch
 Architecture: all
-Depends: coreutils (>= 8.25), parted (>= 3.2), util-linux, udev, file, gdisk, e2fsprogs, p7zip-full, zip, unzip, ${shlibs:Depends}, ${misc:Depends}
+Depends: coreutils (>= 8.25), parted (>= 3.2), util-linux (>= 2.27), udev, file, gdisk, e2fsprogs, p7zip-full, zip, unzip, ${shlibs:Depends}, ${misc:Depends}
 Description: dd helper tool to easily create, preserve and restore disk images
  This is a simple helper tool that wraps dd, fdisk, parted along 
  with other utilities to easily create, preserve and restore disk images.
