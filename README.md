@@ -16,6 +16,7 @@
   3.3. [Releases](#releases)  
 4. [Dependencies](#dependencies)  
 5. [Usage](#usage)
+6. [Limitations](#limitations)
 
 -----
 
@@ -26,7 +27,7 @@
  [Back to top](#table-of-contents)
 
 ## Motivation
-Leaving aside the sparse files and their drawbacks, `dd` leaves you with an image equal in size to the size of the input media. Such an image may contain empty spaces, unpartitioned volumes, and be cumbersome to compress and store. Restoring an image to a device of a different size may also require appropriate modifications to the image (partition resizing, trimming) or the device itself after the restore (enlarging the last partition). This tool was created to make these steps a little easier.
+When sparse files are not in play, `dd` leaves you with an image equal in size to the size of the input media. Such an image may contain empty spaces, unpartitioned volumes, and be cumbersome to compress and store. Restoring an image to a device of a different size may also require appropriate modifications to the image (partition resizing, trimming) or the device itself after the restore (enlarging the last partition). This tool was created to make these steps a little easier.
 
  [Back to top](#table-of-contents)
 
@@ -154,6 +155,8 @@ The script uses tools from the following Debian packages:
 - `parted`
 - `fdisk`
 - `mount`
+- `file`
+- `gdisk`
 - `e2fsprogs`
 - `p7zip-full`, `zip`, `unzip` (optional)
 
@@ -214,3 +217,4 @@ Common options:
  - Archiving and extending MBR images with the last logical partition contained in the extended partition is not supported.
  - Archiving images containing physical LVM volumes is not fully supported. You can try archiving with the "--no-zero" parameter and manually managing the volumes after the restore.
 
+ [Back to top](#table-of-contents)
