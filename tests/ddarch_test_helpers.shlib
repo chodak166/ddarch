@@ -53,7 +53,7 @@ cleanUp()
   retCode=$?
   
   mountpoint -q "$TEST_MNT_DIR" && umount -f "$TEST_MNT_DIR"
-  rm -r "$TEST_TMP_DIR" "$TEST_TMP_CACHE_DIR" "$TEST_MNT_DIR"
+  rm -r "$TEST_TMP_DIR" "$TEST_TMP_CACHE_DIR" "$TEST_MNT_DIR" ||:
   
   if [ $retCode -eq 0 ]; then
     echo -e "${GREEN}Done!${NC}"
@@ -97,13 +97,13 @@ formatAndPlaceTEST_BIN_FILE()
 {
   local imgFile="$1"
   local loDevice=$(losetup -f)
-  losetup -o 1MiB -L --partscan --sizelimit 2MiB $loDevice "$imgFile"
+  losetup -o 1MiB --partscan --sizelimit 2MiB $loDevice "$imgFile"
   mke2fs -t ext4 $loDevice
   losetup -d $loDevice
   
   fdisk -lu "$imgFile"
   
-  losetup -o 3MiB -L --partscan --sizelimit 5MiB $loDevice "$imgFile"
+  losetup -o 3MiB --partscan --sizelimit 5MiB $loDevice "$imgFile"
   mke2fs -t ext4 $loDevice
   mount $loDevice $TEST_MNT_DIR
   cp $TEST_BIN_FILE $TEST_MNT_DIR/

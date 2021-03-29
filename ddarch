@@ -98,7 +98,7 @@
 
 SCRIPT_NAME=ddarch
 SCRIPT_FILENAME=$(basename "$0")
-SCRIPT_VERSION=0.1.3
+SCRIPT_VERSION=0.1.4
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 set -e          # exit on command errors (so you MUST handle exit codes properly!)
@@ -626,7 +626,7 @@ shrinkLastPartition() #EXPFUN [image] [tail size]
   
   loDevice=$(losetup -f)
  
-  execCmd losetup -L -o $offsetBytes $loDevice "$image"
+  execCmd losetup -o $offsetBytes $loDevice "$image"
   execCmd e2fsck -y -f $loDevice
 
   local blockSize=$(getBlockSize $loDevice)
@@ -655,7 +655,7 @@ fillWithZeros()  #EXPFUN [image]
     
     local offsetBytes=$(($sectorSize * $offset))
     loDevice=$(losetup -f)
-    execCmd losetup -L -o $offsetBytes $loDevice "$image"
+    execCmd losetup -o $offsetBytes $loDevice "$image"
     test -d $tmpMountDir || mkdir -p $tmpMountDir
     
     execCmd mount $loDevice $tmpMountDir
