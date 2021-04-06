@@ -40,6 +40,18 @@ fi
 
 git clean -fdx
 
+help2man --no-info \
+  --name "archive & restore utility for dd disk images" \
+  ./ddarch -o man/ddarch.1
+
+CHANGED=$(git diff-index --name-only HEAD --)
+
+if [ ! -z "$CHANGED" ]; then
+  echo "Please commit the changes and try again:"
+  echo "$CHANGED"
+  exit 1
+fi
+
 mkdir $TMP_DIR || rm -r $TMP_DIR/*
 git archive --format=tar --prefix=$PREFIX/ HEAD | gzip -c > $TMP_DIR/$PREFIX.orig.tar.gz
 
