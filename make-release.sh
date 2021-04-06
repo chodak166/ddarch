@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-#set -x
+set -x
 
 PACKAGE=ddarch
 VERSION=$(./ddarch --version | grep -Eo '[0-9.]+')
@@ -44,7 +44,7 @@ help2man --no-info \
   --name "archive & restore utility for dd disk images" \
   ./ddarch -o man/ddarch.1
 
-CHANGED=$(git diff-index --name-only HEAD --)
+CHANGED=$(git diff --name-only)
 
 if [ ! -z "$CHANGED" ]; then
   echo "Please commit the changes and try again:"
