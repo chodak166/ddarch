@@ -1,3 +1,11 @@
+ddarch (0.1.5-1) bionic; urgency=medium
+
+  * Fixed execution break when archiving corrupted devices
+  * Added test cases with debugfs
+  * Minor improvements in helper scripts
+
+ -- chodak166 <chodak166@op.pl>  Tue, 06 Apr 2021 19:45:10 +0200
+ 
 ddarch (0.1.4-1) bionic; urgency=medium
 
   * Removed losetup -L calls for xenial compatibility
