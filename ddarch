@@ -627,7 +627,7 @@ shrinkLastPartition() #EXPFUN [image] [tail size]
   loDevice=$(losetup -f)
  
   execCmd losetup -o $offsetBytes $loDevice "$image"
-  execCmd e2fsck -y -f $loDevice
+  execCmd 'e2fsck -y -f $loDevice ||:'
 
   local blockSize=$(getBlockSize $loDevice)
   local minBlocks=$(estimateBlocksAfterShrink $loDevice)

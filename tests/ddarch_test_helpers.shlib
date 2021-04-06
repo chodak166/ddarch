@@ -33,10 +33,10 @@ setupTestFiles()
   else
     head -c 1M /dev/urandom > $TEST_BIN_FILE
     createMbrPriTestImage $TEST_MBR_PRI_IMAGE
-    formatAndPlaceTEST_BIN_FILE $TEST_MBR_PRI_IMAGE
+    formatAndPlaceTestFile $TEST_MBR_PRI_IMAGE
     
     createGptPriTestImage $TEST_GPT_PRI_IMAGE
-    formatAndPlaceTEST_BIN_FILE $TEST_GPT_PRI_IMAGE
+    formatAndPlaceTestFile $TEST_GPT_PRI_IMAGE
     
     createMbrExtTestImage $TEST_MBR_EXT_IMAGE
     
@@ -93,7 +93,7 @@ createGptPriTestImage()
   parted -a optimal --script "$imgFile" mkpart primary ext4 3MiB 8MiB
 }
 
-formatAndPlaceTEST_BIN_FILE()
+formatAndPlaceTestFile()
 {
   local imgFile="$1"
   local loDevice=$(losetup -f)
@@ -112,4 +112,19 @@ formatAndPlaceTEST_BIN_FILE()
   losetup -d $loDevice
   
   fdisk -lu "$imgFile"
+}
+
+corruptLastPartition()
+{
+  local imgFile="$1"
+  local offset=$(sfdisk -l "$imgFile" -o Start | tail -n 1)
+  local loDevice=$(losetup -f --show --offset $((512*$offset)) "$imgFile")
+  
+  debugfs -w  -R 'write /dev/null bad_file' $loDevice
+  debugfs -w  -R 'clri bad_file' $loDevice
+  mount $loDevice $TEST_MNT_DIR
+  ls -sF $TEST_MNT_DIR 2>/dev/null ||:
+  
+  umount $TEST_MNT_DIR
+  losetup -d $loDevice
 }

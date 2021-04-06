@@ -9,12 +9,14 @@
 set -e 
 #set -x && PS4='- Line ${LINENO}: '
 
-DDARCH_PATH=$(readlink -e ../ddarch)
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+DDARCH_PATH=$(readlink -e "${DIR}/../ddarch")
+
+cd "$DIR"
 
 . "$DDARCH_PATH"
 . ddarch_test_helpers.shlib
 . test.shlib
-
 
 # ---------- function tests ------------
 
@@ -153,7 +155,7 @@ test_cliArchiveMinimalMbr()
   setupTestFiles
   local inputAbsolutePath=$(readlink -e $TEST_MBR_PRI_IMAGE)
   pushd $TEST_TMP_DIR >/dev/null
-  "$DDARCH_PATH" --input $inputAbsolutePath --quiet
+  "$DDARCH_PATH" --yes --input $inputAbsolutePath --quiet
   popd >/dev/null
   
   local output=$TEST_TMP_DIR/$(date +%Y-%m-%d)-image.img.7z
@@ -170,7 +172,7 @@ test_cliArchiveExplicitOutputZip()
   setupTestFiles
   local output=$TEST_TMP_DIR/gpt_pri_out.zip
   
-  "$DDARCH_PATH" archive --input $TEST_GPT_PRI_IMAGE \
+  "$DDARCH_PATH" archive --yes --input $TEST_GPT_PRI_IMAGE \
     --output $output \
     --arch-type zip \
     --quiet
@@ -189,7 +191,7 @@ test_cliArchiveEmptyWorkDir()
   local output=$TEST_TMP_DIR/gpt_pri_out.img
   local workDir=$TEST_TMP_DIR/empty_work_dir
   
-  "$DDARCH_PATH" archive --input $TEST_GPT_PRI_IMAGE \
+  "$DDARCH_PATH" archive --yes --input $TEST_GPT_PRI_IMAGE \
     --output $output \
     --arch-type none \
     --work-dir $workDir \
@@ -209,7 +211,7 @@ test_cliArchiveNonEmptyWorkDir()
   mkdir -p $workDir
   touch $foreignFile
   
-  "$DDARCH_PATH" archive --input $TEST_GPT_PRI_IMAGE \
+  "$DDARCH_PATH" archive --yes --input $TEST_GPT_PRI_IMAGE \
     --output $output \
     --arch-type none \
     --work-dir $workDir \
@@ -228,7 +230,7 @@ test_cliArchiveMbrDevice()
   output=$TEST_TMP_DIR/mbrdevice.img
   loDevice=$(losetup --show -f $TEST_MBR_PRI_IMAGE)
   
-  "$DDARCH_PATH" archive --input $loDevice -a none --output $output --quiet
+  "$DDARCH_PATH" archive --yes --input $loDevice -a none --output $output --quiet
   
   losetup -d $loDevice
     
@@ -249,7 +251,7 @@ test_cliArchiveInPlaceNoCompressNoOutput()
   local inputSizeBefore=$(stat --printf="%s" $input)
   
   
-  "$DDARCH_PATH" archive --input $input \
+  "$DDARCH_PATH" archive --yes --input $input \
     --output $output \
     --arch-type none \
     --in-place \
@@ -270,7 +272,7 @@ test_cliArchiveInPlaceTarGzOutput()
   
   local inputSizeBefore=$(stat --printf="%s" $input)
   
-  "$DDARCH_PATH" archive --input $input \
+  "$DDARCH_PATH" archive --yes --input $input \
     --output $output \
     --arch-type tgz \
     --in-place \
@@ -281,6 +283,25 @@ test_cliArchiveInPlaceTarGzOutput()
   
   assertEqual $inExists false "Input file should be deleted if the '--in-place' flag was used"
   assertEqual $mimeType "application/gzip" "The output file MIME type should be application/gzip"
+}
+
+test_cliArchiveCorruptedMbr()
+{
+  setupTestFiles
+  local inputAbsolutePath=$(readlink -e $TEST_MBR_PRI_IMAGE)
+  corruptLastPartition $TEST_MBR_PRI_IMAGE
+  
+  pushd $TEST_TMP_DIR >/dev/null
+  "$DDARCH_PATH" --yes --input $inputAbsolutePath --yes --quiet
+  popd >/dev/null
+  
+  local output=$TEST_TMP_DIR/$(date +%Y-%m-%d)-image.img.7z
+  local mimeType=$(getMimeType $output)
+  local inputSize=$(stat --printf="%s" $TEST_MBR_PRI_IMAGE)
+  local outputSize=$(stat --printf="%s" $output)
+  
+  assertEqual $mimeType "application/x-7z-compressed" "Archived output MIME type should be application/x-7z-compressed"
+  assertGreater $inputSize $outputSize "The input size should be greater than the output size"
 }
 
 test_cliRestoreMbrImage()
