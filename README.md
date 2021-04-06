@@ -134,6 +134,12 @@ sudo apt-get update
 sudo apt-get install ddarch
 ```
 
+Note: on Ubuntu 16.04 (Xenial) with buggy `software-properties-common` use:
+
+```
+LC_ALL=C.UTF-8 sudo add-apt-repository ppa:chodak166/ppa
+```
+
 ## Manual installation
 
 The very minimum you truly need is to place the `ddarch` file from this repository in any of your `$PATH` directories (e.g. `/usr/bin`). Don't forget to make sure you have all [dependencies](#dependencies) installed.
