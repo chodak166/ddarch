@@ -22,7 +22,7 @@
 
 # Overview
 
-**ddarch** is a simple helper tool that wraps `dd`, `fdisk`, `parted` along with other utilities to easily create, preserve and restore disk images. 
+**ddarch** is a simple GNU/Linux helper tool that wraps `dd`, `fdisk`, `parted` along with other utilities to easily create, preserve and restore disk images. 
 
  [Back to top](#table-of-contents)
 
