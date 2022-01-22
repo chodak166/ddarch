@@ -32,7 +32,7 @@
 ##   --no-truncate                  do not truncate the image
 ##   --no-zero                      do not fill empty space with zeros
 ##   --in-place                     edit input file when it's an image (and remove after compression)
-##   --mnt-dir [dir]                temporary mount location; defaults to /tmp/ddarch.mnt.<timestamp>
+##   --mount-dir [dir]              temporary mount location; defaults to /tmp/ddarch.mnt.<timestamp>
 ##
 ##
 ## Restore options:
@@ -98,7 +98,7 @@
 
 SCRIPT_NAME=ddarch
 SCRIPT_FILENAME=$(basename "$0")
-SCRIPT_VERSION=0.1.5
+SCRIPT_VERSION=0.1.6
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 set -e          # exit on command errors (so you MUST handle exit codes properly!)
@@ -136,6 +136,7 @@ verify=false
 
 loDevice=
 unarchivedOutput=
+
 #===========================================
 
 
@@ -261,7 +262,7 @@ listFunctions()
   exit 0
 } 2>/dev/null
 
-#========== cli functions ==========
+#========== application functions ==========
 
 
 run() 
@@ -349,7 +350,7 @@ assertNoTmpfsTemp()
   if [ $fsType = tmpfs ]; then
     alternativeWorkDir="$HOME/ddarch.tmp."$(date +%s)
     if confirm "It looks like $tmpWorkDir is a mounted tmpfs ramdisk. Do you want to use $alternativeWorkDir instead?"; then
-      rmdir "$tmpWorkDir"
+      if [ ! "$(ls -A $tmpWorkDir)" ]; then rmdir $tmpWorkDir; fi
       tmpWorkDir="$alternativeWorkDir"
       mkdir -p "$tmpWorkDir"
       ilog "Using: $tmpWorkDir"
@@ -493,7 +494,7 @@ assertRoot()
 
 getInputType()
 {
-  fileType=$(getMimetype "$input")
+  fileType=$(getMimeType "$input")
   if [[ "$fileType" == "inode/blockdevice" ]]; then
     echo "device"
   elif [[ "$fileType" == "application/octet-stream" ]]; then
@@ -539,45 +540,7 @@ function confirm {
 }
 
 
-#========== shlib functions ==========
-
-ilog()
-{
-  [ $quiet = true ] && return 0
-  echo -e $(date "+%Y-%m-%d %H:%M:%S")" INFO: $@"
-}
-
-wlog()
-{
-  [ $quiet = true ] && return 0
-  echo -e $(date "+%Y-%m-%d %H:%M:%S")" WARNING: $@" 1>&2
-}
-
-elog()
-{
-  [ $quiet = true ] && return 0
-  echo -e $(date "+%Y-%m-%d %H:%M:%S")" ${RED}ERROR: $@${NC}" 1>&2
-}
-
-vlog()
-{
-  [ $quiet = true ] && return 0
-  if [ $verbose = true ]; then
-    echo -e $(date "+%Y-%m-%d %H:%M:%S")" VER: $@"
-  fi
-}
-
-execCmd()
-{
-  cmd="$@"
-  if [ $quiet = true ]; then
-    cmd="$cmd &>/dev/null"
-  fi
-  
-  vlog "Executing ("$(caller)"): $cmd"
-  eval "$cmd"
-  return $?
-}
+#========== core functions ==========
 
 isLastPartitionExt() #EXPFUN [image]
 {
@@ -812,7 +775,7 @@ getEndSector() #EXPFUN [image]
 getPathFsType() #EXPFUN [path]
 {
   local path="$1"
-  local value=$(df -TP /tmp | tail -1 | awk '{print $2}')
+  local value=$(df -TP $path | tail -1 | awk '{print $2}')
   echo $(trim "$value")
 }
 
@@ -840,7 +803,46 @@ trim() {
   printf '%s' "$string"
 }
 
+#========== helper functions ==========
+
+ilog()
+{
+  [ $quiet = true ] && return 0
+  echo -e $(date "+%Y-%m-%d %H:%M:%S")" INFO: $@"
+}
+
+wlog()
+{
+  [ $quiet = true ] && return 0
+  echo -e $(date "+%Y-%m-%d %H:%M:%S")" WARNING: $@" 1>&2
+}
+
+elog()
+{
+  [ $quiet = true ] && return 0
+  echo -e $(date "+%Y-%m-%d %H:%M:%S")" ${RED}ERROR: $@${NC}" 1>&2
+}
+
+vlog()
+{
+  [ $quiet = true ] && return 0
+  if [ $verbose = true ]; then
+    echo -e $(date "+%Y-%m-%d %H:%M:%S")" VER: $@"
+  fi
+}
+
+execCmd()
+{
+  cmd="$@"
+  if [ $quiet = true ]; then
+    cmd="$cmd &>/dev/null"
+  fi
+  
+  vlog "Executing ("$(caller)"): $cmd"
+  eval "$cmd"
+  return $?
+}
 
 #===========================================
-
+# run main only if not sourced
 (return 0 2>/dev/null) || main "$@"
