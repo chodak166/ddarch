@@ -98,11 +98,11 @@
 
 SCRIPT_NAME=ddarch
 SCRIPT_FILENAME=$(basename "$0")
-SCRIPT_VERSION=0.1.6
+SCRIPT_VERSION=0.1.7
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-set -e          # exit on command errors (so you MUST handle exit codes properly!)
-set -o pipefail # capture fail exit codes in piped commands
+#set -e          # exit on command errors
+#set -o pipefail # capture fail exit codes in piped commands
 #set -x          # execution tracing debug messages
 
 RED='\033[0;31m'
@@ -133,6 +133,7 @@ verbose=false
 allYes=false
 inPlace=false
 verify=false
+errorNotice=true
 
 loDevice=
 unarchivedOutput=
@@ -154,6 +155,9 @@ usage()
 } 2>/dev/null
 
 main() {
+    set -e
+    set -o pipefail
+
     readCommandArg
     readOptions
     run
@@ -311,7 +315,7 @@ cleanup()
   
   if [ $retCode -eq 0 ]; then
     ilog "Done!"
-  else
+  elif [ $errorNotice = true ]; then
     wlog "Finished with errors, try --verbose or --debug to investigate what went wrong"
   fi
   
@@ -360,6 +364,26 @@ assertNoTmpfsTemp()
   fi
 }
 
+assertBlockDevice()
+{
+  device="$1"
+  fileType=$(getMimeType "$device")
+  if [[ "$fileType" != "inode/blockdevice" ]]; then
+    elog "$device is not a block device, aborting"
+    exit 1
+  fi
+}
+
+assertNotInUse()
+{
+  device="$1"
+  mountPoints=$(getMountPoints "$device")
+  if [ ! -z "$mountPoints" ]; then
+    elog "It looks like given device ($device) is in use, please unmount: $mountPoints"
+    exit 1
+  fi
+}
+
 setupOutputName() 
 {
   if [ -z "$output" ]; then
@@ -389,7 +413,8 @@ archiveImageOrDevice()
   ilog "Archiving $input as $output"
   
   local inputType=$(getInputType)  
-  
+  local tmpImage=false
+
   if [ $inPlace = true ]; then
     if [[ "$inputType" == "device" ]]; then
       elog "The '--in-place' flag cannot be used with the device given as input, aborting"
@@ -401,15 +426,23 @@ archiveImageOrDevice()
     local outFilename=
     imageFile="$tmpWorkDir"/$(basename "$unarchivedOutput")
     dd if="$input" of="$imageFile" status=progress $ddArgs
+    local tmpImage=true
   fi
   
   archiveImageFile "$imageFile"
+
+  if [ $tmpImage = true ]; then
+    rm "$imageFile"
+  fi
 }
 
 restoreArchiveOrImage()
 {
   ilog "Restoring image $input to $output"
   
+  assertBlockDevice "$output"
+  assertNotInUse "$output"
+
   restoreImage "$input" "$output" $noExtend
 
   if [ $verify = true ]; then
@@ -542,6 +575,8 @@ function confirm {
 
 #========== core functions ==========
 
+#===== last partition =====
+
 isLastPartitionExt() #EXPFUN [image]
 {
   local image="$1"
@@ -566,12 +601,21 @@ getLastPartitionSize() #EXPFUN [image]
   echo $(trim "$size")
 }
 
-shrinkLastPartition() #EXPFUN [image] [tail size]
+getLastPartitionNumber()
 {
   local image="$1"
-  local tailSize="$2"
+  local value=$(parted --script "$image" print | grep "." | tail -1 | awk '{print $1}')
+  echo $value
+}
+
+shrinkLastPartition() #EXPFUN [image] [tail size]
+{
+  # S - sectors, B - bytes, Bk - blocks
+
+  local image="$1"
+  local tailSizeB="$2"
   
-  vlog "Shrinking the last partition with tail $tailSize"
+  vlog "Shrinking the last partition with tail $tailSizeB"
   
   isExt=$(isLastPartitionExt "$image")
   if [ $isExt = false ]; then
@@ -579,32 +623,51 @@ shrinkLastPartition() #EXPFUN [image] [tail size]
     return
   fi
   
-  if [ -z "$tailSize" ]; then 
-    tailSize=$shrinkTailSize; 
+  if [ -z "$tailSizeB" ]; then 
+    tailSizeB=$shrinkTailSize; 
   fi
   
-  local sectorSize=$(getSectorSize "$image")
-  local offsetSectors=$(getLastPartitionOffset "$image")
-  local offsetBytes=$(($offsetSectors * $sectorSize))
+  local sectorSizeB=$(getSectorSize "$image")
+  local offsetS=$(getLastPartitionOffset "$image")
+  local offsetB=$(($offsetS * $sectorSizeB))
   
   loDevice=$(losetup -f)
  
-  execCmd losetup -o $offsetBytes $loDevice "$image"
+  execCmd losetup -o $offsetB $loDevice "$image"
   execCmd 'e2fsck -y -f $loDevice ||:'
 
-  local blockSize=$(getBlockSize $loDevice)
-  local minBlocks=$(estimateBlocksAfterShrink $loDevice)
-  local minBlocks=$(($minBlocks + $tailSize / $blockSize))
-  local newFsSize=$(($blockSize * $minBlocks))
-  local newEnd=$(($offsetBytes + $newFsSize))
-  
-  execCmd resize2fs $loDevice $minBlocks
+  local blockSizeB=$(getBlockSize $loDevice)
+  local minSizeBk=$(estimateBlocksAfterShrink $loDevice)
+  local minSizeB=$(($minSizeBk * $blockSizeB))
+  local currentSizeB=$(getLastPartitionSize "$image")
+
+  if [ $currentSizeB -le $minSizeB ]; then
+    wlog "The esimated size after shrinking (${minSizeB}B) is bigger than the current one (${currentSizeB}B), skipping"
+    return 0
+  fi
+
+  execCmd resize2fs $loDevice $minSizeBk
   execCmd losetup -d $loDevice
 
   partNumber=$(getLastPartitionNumber "$image")
 
-  echo Yes | execCmd parted "$image" ---pretend-input-tty unit B resizepart $partNumber ${newEnd}B >/dev/null 2>&1 
+  local newEndB=$(($offsetB + $minSizeB + $tailSizeB))
+  echo Yes | execCmd parted "$image" ---pretend-input-tty unit B resizepart $partNumber ${newEndB}B >/dev/null 2>&1 
 }
+
+extendLastPartition() #EXPFUN [device]
+{
+  local device=$1
+  isGpt=$(hasGptLayout $device)
+  if [ $isGpt = true ]; then
+    execCmd sgdisk -e $device > /dev/null 2>&1
+  fi
+  
+  lastPartitionNum=$(getLastPartitionNumber $device)
+  execCmd parted --script $device \"resizepart $lastPartitionNum -1\"
+}
+
+#===== image =====
 
 fillWithZeros()  #EXPFUN [image]
 {
@@ -698,17 +761,7 @@ restoreImage()  #EXPFUN [image] [device] [skip resizepart (true/false)]
   fi
 }
 
-extendLastPartition() #EXPFUN [device]
-{
-  local device=$1
-  isGpt=$(hasGptLayout $device)
-  if [ $isGpt = true ]; then
-    execCmd sgdisk -e $device > /dev/null 2>&1
-  fi
-  
-  lastPartitionNum=$(getLastPartitionNumber $device)
-  execCmd parted --script $device \"resizepart $lastPartitionNum -1\"
-}
+#===== misc =====
 
 getBlockCount() #EXPFUN [device]
 {
@@ -736,13 +789,6 @@ estimateBlocksAfterShrink() #EXPFUN [device]
   local device=$1  
   local value=$(resize2fs -P $device 2>/dev/null | awk '{print $NF}')
   echo $(trim "$value")
-}
-
-getLastPartitionNumber()
-{
-  local image="$1"
-  local value=$(parted --script "$image" print | grep "." | tail -1 | awk '{print $1}')
-  echo $value
 }
 
 getStartOffsets() #EXPFUN [device]
@@ -789,6 +835,18 @@ hasGptLayout() #EXPFUN [image]
   fi
 }
 
+getMountPoints() #EXPFUN [device]
+{
+  local device=$1
+  local mounts=( $(lsblk --list --noheadings --output MOUNTPOINT $device | awk '$1' | sort) )
+  if [ ${#mounts[@]} -eq 0 ]; then
+    return 0
+  fi
+
+  mounts=$(printf "'%s' " "${mounts[@]}")
+  echo ${mounts}
+}
+
 getMimeType() #EXPFUN [file]
 {
   local file="$1"
@@ -821,6 +879,7 @@ elog()
 {
   [ $quiet = true ] && return 0
   echo -e $(date "+%Y-%m-%d %H:%M:%S")" ${RED}ERROR: $@${NC}" 1>&2
+  errorNotice=false
 }
 
 vlog()
