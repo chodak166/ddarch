@@ -18,6 +18,8 @@
 ##
 ## restore           - copy the image to the device and extend the last partition; decompress first if the input is an archive
 ##
+## shell             - run interactive shell with sourced ddarch functions
+##
 ## *OPTIONS*
 ##
 ## Archive options:
@@ -28,6 +30,7 @@
 ##   -n, --name [string]            replace "image" suffix of the output file name with the given name
 ##   --resizepart-tail [bytes]      additional empty space left in the shrunk partition (1MiB by default)
 ##   --truncate-tail [bytes]        additional empty space left in the truncated image (1MiB by default)
+##   --skip-unpart                  do not read input after last parition end sector
 ##   --no-resizepart                do not resize the last partition
 ##   --no-truncate                  do not truncate the image
 ##   --no-zero                      do not fill empty space with zeros
@@ -111,8 +114,9 @@ COL_PRIMARY='\e[38;5;196m'
 COL_SECONDARY='\e[38;5;208m'
 NC='\033[00m' # No Color
 
-tmpWorkDir=/tmp/ddarch.$(date +%s)
-tmpMountDir=/tmp/ddarch.mnt.$(date +%s)
+cachePrefix='ddarch.'
+tmpWorkDir=/tmp/${cachePrefix}$(date +%s)
+tmpMountDir=/tmp/${cachePrefix}mnt.$(date +%s)
 STDOUT=`readlink -f /proc/$$/fd/1`
 STDERR=`readlink -f /proc/$$/fd/2`
 declare -A MIN_ARGS
@@ -127,6 +131,7 @@ outputBaseName=image
 shrinkTailSize=$((1024 * 1024)) # 1M
 truncateTailSize=$((1024 * 1024)) # 1M
 archType=7z
+skipUnpart=false
 noResize=false
 noTruncate=false
 noZero=false
@@ -219,6 +224,8 @@ readOptions()
         truncateTailSize="$1";;
       ('--no-resizepart')
         noResize=true;;
+      ('--skip-unpart')
+        skipUnpart=true;;
       ('--no-truncate')
         noTruncate=true;;
       ('--no-zero')
@@ -315,12 +322,18 @@ cleanup()
   fi
   
   if findmnt -rno SOURCE,TARGET $tmpMountDir >/dev/null; then
-    umount -f $tmpMountDir
+    umount -f "$tmpMountDir"
   fi
   
-  if [ ! "$(ls -A $tmpWorkDir)" ]; then rmdir $tmpWorkDir; fi
-  if [ ! "$(ls -A $tmpMountDir)" ]; then rmdir $tmpMountDir; fi
+  if [ -d "$tmpWorkDir" ] && [ ! $(ls -A "$tmpWorkDir") ]; then rmdir $tmpWorkDir; fi
+  if [ -d "$tmpMountDir" ] && [ ! $(ls -A "$tmpMountDir") ]; then rmdir $tmpMountDir; fi
   
+  cacheDirs=$(findCacheDirs)
+  if [ ! -z "$cacheDirs" ]; then
+    wlog "Lingering temporary directories have been found. Consider manual cleanup:"
+    printf "$cacheDirs\n"
+  fi
+
   if [ $retCode -eq 0 ]; then
     ilog "Done!"
   elif [ $errorNotice = true ]; then
@@ -433,7 +446,7 @@ archiveImageOrDevice()
   else
     local outFilename=
     imageFile="$tmpWorkDir"/$(basename "$unarchivedOutput")
-    dd if="$input" of="$imageFile" status=progress $ddArgs
+    cloneDevice "$input" "$imageFile" $skipUnpart "$ddArgs"
     local tmpImage=true
   fi
   
@@ -507,7 +520,7 @@ archiveImageFile()
       mv "$imageFile" "$output"
     fi
   else
-    compressImage "$imageFile"
+    compressImage "$imageFile" "$output" $archType
     if [ $inPlace = true ]; then
       rm "$imageFile"
     fi
@@ -540,7 +553,7 @@ assertRoot()
 
 getInputType()
 {
-  fileType=$(getMimeType "$input")
+  local fileType=$(getMimeType "$input")
   if [[ "$fileType" == "inode/blockdevice" ]]; then
     echo "device"
   elif [[ "$fileType" == "application/octet-stream" ]]; then
@@ -552,7 +565,9 @@ getInputType()
 
 compressImage()
 {
-  imageFile="$1"
+  local imageFile="$1"
+  local archiveFile="$2"
+  local archType=$3
   
   case $archType in
     ('7z')
@@ -571,8 +586,8 @@ confirm() {
     return 0
   fi
 
-  text=$1
-  c=''
+  local text=$1
+  local c=''
   while [[ "$c" != "n" ]] && [[ "$c" != "y" ]]; do
     echo -n "${text} [y/n]: "
     read c
@@ -587,7 +602,9 @@ confirm() {
 
 runDdarchSubshell()
 {
-  local psString="\[${COL_PRIMARY}\]ddarch:>\[${COL_SECONDARY}\]\w\[${NC}\]\$ "
+  local psString="\[${COL_PRIMARY}\]ddarch:>\[${COL_SECONDARY}\]\w\[${NC}\]"
+  [ $UID -eq 0 ] && psString+="# " || psString+="\$ "
+
   local selfPath="${SCRIPT_DIR}/${SCRIPT_FILENAME}"
   local aliases="
     alias functions='$selfPath --functions';
@@ -670,7 +687,7 @@ extendLastPartition() #EXPFUN [device/image]
   execCmd parted --script $device \"resizepart $lastPartitionNum -1\"
 }
 
-fillWithZeros() #EXPFUN [image]
+fillWithZeros() #EXPFUN [device/image]
 {
   local image="$1"
   local sectorSize=$(getSectorSize "$image")
@@ -729,7 +746,34 @@ truncateImage()  #EXPFUN [image] [tail size]
   execCmd truncate --size $trSize "$image"
   
   if [ $isGpt = true ]; then
-    execCmd sgdisk -e "$image" >/dev/null 2>&1
+    fixGptBackup "$image"
+  fi
+}
+
+cloneDevice() #EXPFUN [device/image] [output] [skip unpartitioned space (true/false)] [dd args]
+{
+  local input="$1"
+  local output="$2"
+  local skipUnpart=$3
+  local ddArgs="$4"
+  local hasGpt=$(hasGptLayout "$input")
+
+  if [ $skipUnpart = true ]; then
+    local lba=$(getFirstUsableLba "$input")
+    local endSector=$(getEndSector "$input")
+
+    # add lba (finally lba * sector size) to fit backup gpt table
+    # if no gpt table is present, returned lba is 0
+    count=$(($endSector + $lba))
+    
+    local sectorSizeB=$(getSectorSize "$input")
+    ddArgs="bs=$sectorSizeB count=$count $ddArgs"
+  fi
+
+  execCmd dd if="$input" of="$output" status=progress $ddArgs
+
+  if [ $hasGpt = true ] && [ $skipUnpart = true ]; then
+    fixGptBackup "$output"
   fi
 }
 
@@ -762,6 +806,12 @@ restoreImage()  #EXPFUN [image] [device] [skip resizepart (true/false)]
   fi
 }
 
+fixGptBackup() #EXPFUN [device/image]
+{
+  local input="$1"
+  execCmd sgdisk --move-second-header "$input" >/dev/null 2>&1
+}
+
 #===== misc =====
 
 isLastPartitionExt() #EXPFUN [image]
@@ -774,21 +824,21 @@ isLastPartitionExt() #EXPFUN [image]
   fi
 }
 
-getLastPartitionOffset() #EXPFUN [image]
+getLastPartitionOffset() #EXPFUN [device/image]
 {
   local image="$1"
   local offset=$(sfdisk -l "$image" -o Start | tail -n 1)
   echo $(trim "$offset")
 }
 
-getLastPartitionSize() #EXPFUN [image]
+getLastPartitionSize() #EXPFUN [device/image]
 {
   local image="$1"
   local size=$(sfdisk --bytes -l -o Size --bytes "$image" | tail -n1)
   echo $(trim "$size")
 }
 
-getLastPartitionNumber() #EXPFUN [image]
+getLastPartitionNumber() #EXPFUN [device/image]
 {
   local image="$1"
   local value=$(parted --script "$image" print | grep "." | tail -1 | awk '{print $1}')
@@ -809,7 +859,7 @@ getBlockSize() #EXPFUN [device]
   echo $(trim "$value")
 }
 
-getSectorSize() #EXPFUN [device]
+getSectorSize() #EXPFUN [device/image]
 {
   local image="$1"
   local value=$(sfdisk -l "$image" | grep 'Sector size' | awk '{print $(NF-4)}')
@@ -823,7 +873,7 @@ estimateBlocksAfterShrink() #EXPFUN [device]
   echo $(trim "$value")
 }
 
-getStartOffsets() #EXPFUN [device]
+getStartOffsets() #EXPFUN [device/image]
 {
   local image="$1"
   local typesExpr="$2"
@@ -843,7 +893,7 @@ getAvailableSpace() #EXPFUN [path]
   echo $value
 }
 
-getEndSector() #EXPFUN [image]
+getEndSector() #EXPFUN [device/image]
 {
   local image="$1"
   local value=$(sfdisk -o End -l "$image" | tail -1)
@@ -876,7 +926,15 @@ getMimeType() #EXPFUN [file]
   echo $(trim "${value%;}")
 }
 
-hasGptLayout() #EXPFUN [image]
+getFirstUsableLba() #EXPFUN [device/image]
+{
+  local image="$1"
+  local value=$(sfdisk --dump "$image" | grep 'first-lba' | awk '{print $2}')
+  [ -z "$value" ] && value=0
+  echo $(trim "$value")
+}
+
+hasGptLayout() #EXPFUN [device/image]
 {
   local image="$1"
   if $(sfdisk -l "$image" 2>/dev/null | grep -q 'type: gpt'); then
@@ -884,6 +942,14 @@ hasGptLayout() #EXPFUN [image]
   else
     echo false
   fi
+}
+
+findCacheDirs() #EXPFUN
+{
+  local dirs=$(ls -d -1 "$PWD/$cachePrefix"* 2>/dev/null ||:)
+  [ -z "$dirs" ] || dirs+='\n'
+  dirs+=$(ls -d -1 "$HOME/$cachePrefix"* 2>/dev/null ||:)
+  printf "$dirs"
 }
 
 trim() {

@@ -9,7 +9,8 @@
 2. [Quick start](#quick-start)  
 	2.1. [Archiving](#archiving)  
 	2.2. [Restoring](#restoring)  
-	2.3. [Sourcing](#sourcing)  
+	2.3. [Interactive shell](#shell)  
+	2.4. [Sourcing](#sourcing)  
 3. [Installation](#installation)  
   3.1. [Installing ddarch on Ubuntu](#installing-ddarch-on-ubuntu)  
   3.2. [Manual installation](#manual-installation)  
@@ -121,6 +122,23 @@ truncateImage my_image.img 0
 ```
 See `ddarch --functions` to learn more.
 
+## Interactive shell
+
+Instead of sourcing ddarch, you can run an interactive sub-shell:
+
+```
+ddarch shell
+```
+
+and type "functions" to see the list of available functions. This can be useful, for example, when making images of large SD cards, when you want to skip copying unpartitioned space:
+
+```
+sudo ddarch shell
+ddarch:>~# shrinkLastPartition /dev/sdX
+ddarch:>~# exit
+sudo ddarch archive --skip-unpart -i /dev/sdX
+```
+
  [Back to top](#table-of-contents)
 
 # Installation
@@ -188,11 +206,12 @@ The `archive` command options:
   -n, --name [string]            replace "image" suffix of the output file name with the given name
   --resizepart-tail [bytes]      additional empty space left in the shrunk partition (1MiB by default)
   --truncate-tail [bytes]        additional empty space left in the truncated image (1MiB by default)
+  --skip-unpart                  do not read input after last parition end sector
   --no-resizepart                do not resize the last partition
   --no-truncate                  do not truncate the image
   --no-zero                      do not fill empty space with zeros
   --in-place                     edit input file when it's an image (and remove after compression)
-  --mnt-dir [dir]                temporary mount location; defaults to /tmp/ddarch.mnt.<timestamp>
+  --mount-dir [dir]              temporary mount location; defaults to /tmp/ddarch.mnt.<timestamp>
 ```
 
 The `restore` command options:
