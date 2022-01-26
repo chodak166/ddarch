@@ -107,12 +107,16 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 RED='\033[0;31m'
 GREEN='\033[1;32m'
-NC='\033[0m' # No Color
+COL_PRIMARY='\e[38;5;196m'
+COL_SECONDARY='\e[38;5;208m'
+NC='\033[00m' # No Color
 
 tmpWorkDir=/tmp/ddarch.$(date +%s)
 tmpMountDir=/tmp/ddarch.mnt.$(date +%s)
 STDOUT=`readlink -f /proc/$$/fd/1`
 STDERR=`readlink -f /proc/$$/fd/2`
+declare -A MIN_ARGS
+MIN_ARGS+=( ["archive"]=1 ["restore"]=2 ["shell"]=0 )
 
 args=($@)
 commandName=archive
@@ -161,6 +165,7 @@ main() {
     readCommandArg
     readOptions
     run
+    exit 0
 }
 
 readCommandArg()
@@ -180,7 +185,7 @@ readOptions()
 {
   set -- "${args[@]}"
   
-  if [ $# -eq 0 ]; then
+  if [ $# -lt ${MIN_ARGS[$commandName]} ]; then
     usage 1;
   fi
   
@@ -240,7 +245,8 @@ readOptions()
       ('-V'|'--verbose')
         verbose=true;;
       ('-f'|'--functions')
-        listFunctions;;
+        listFunctions
+        exit 0;;
       ('--')
         shift
         break;;
@@ -258,12 +264,10 @@ readOptions()
 
 listFunctions() 
 {
-  echo -e "\n$SCRIPT_FILENAME functions (use 'source $SCRIPT_FILENAME'):"
   grep '#EXPFUN' "$SCRIPT_DIR/$SCRIPT_FILENAME" \
   | grep -v 'grep'| sed 's/#EXPFUN //g' | sed 's/()//g' \
   | awk -F: '{if(f!=$1)print ""; f=$1; print " " $0;}'
   echo -ne "\n"
-  exit 0
 } 2>/dev/null
 
 #========== application functions ==========
@@ -276,7 +280,6 @@ run()
     exec &>/dev/null
   fi
 
-  assertInputExists
   assertRoot
 
   mkdir -p $tmpWorkDir
@@ -284,14 +287,19 @@ run()
   
   case $commandName in
     ('archive')
+      assertInputExists
       assertProperArchType
       setupOutputName
       assertNoTmpfsTemp
       assertNoOutputFile
       archiveImageOrDevice;;
     ('restore')
-      test -z $output && elog "No output specified" && usage 1
+      assertInputExists
+      assertOutputSpecified
       restoreArchiveOrImage;;
+    ('shell')
+      runDdarchSubshell 
+      echo "Exiting ddarch shell";;
     (*)
       elog "Unknown command: $commandName"
       exit 1
@@ -511,6 +519,11 @@ assertInputExists()
   test -e "$input" || (elog "Input does not exist: $input" && exit 1)
 }
 
+assertOutputSpecified()
+{
+  test -z "$output" && (elog "No output specified" && exit 1)
+}
+
 assertNoOutputExists()
 {
   test -e "$input" || (elog "Input does not exist: $input" && exit 1)
@@ -552,7 +565,7 @@ compressImage()
   
 }
 
-function confirm {
+confirm() {
 
   if [ $allYes = true ]; then
     return 0
@@ -572,43 +585,30 @@ function confirm {
   fi
 }
 
+runDdarchSubshell()
+{
+  local psString="\[${COL_PRIMARY}\]ddarch:>\[${COL_SECONDARY}\]\w\[${NC}\]\$ "
+  local selfPath="${SCRIPT_DIR}/${SCRIPT_FILENAME}"
+  local aliases="
+    alias functions='$selfPath --functions';
+    alias commands='$selfPath --functions';
+    alias help='$selfPath --help';
+    alias usage='$selfPath --help';
+    "
+  local welcomeString="ddarch shell v$SCRIPT_VERSION\n\nType ${GREEN}functions${NC} to see available commands\n"
+
+  bash --init-file <(cat "$HOME/.bashrc";
+   echo "source '$selfPath';
+    TERM=xterm
+    verbose=true
+    PS1='$psString'
+    echo -e '$welcomeString'
+    $aliases")
+}
 
 #========== core functions ==========
 
-#===== last partition =====
-
-isLastPartitionExt() #EXPFUN [image]
-{
-  local image="$1"
-  if $(parted --script "$image" print | awk '/./{line=$0} END{print line}' | grep -q 'ext[2-4]'); then
-    echo true
-  else
-    echo false
-  fi
-}
-
-getLastPartitionOffset() #EXPFUN [image]
-{
-  local image="$1"
-  local offset=$(sfdisk -l "$image" -o Start | tail -n 1)
-  echo $(trim "$offset")
-}
-
-getLastPartitionSize() #EXPFUN [image]
-{
-  local image="$1"
-  local size=$(sfdisk --bytes -l -o Size --bytes "$image" | tail -n1)
-  echo $(trim "$size")
-}
-
-getLastPartitionNumber()
-{
-  local image="$1"
-  local value=$(parted --script "$image" print | grep "." | tail -1 | awk '{print $1}')
-  echo $value
-}
-
-shrinkLastPartition() #EXPFUN [image] [tail size]
+shrinkLastPartition() #EXPFUN [device/image] [tail size]
 {
   # S - sectors, B - bytes, Bk - blocks
 
@@ -655,21 +655,22 @@ shrinkLastPartition() #EXPFUN [image] [tail size]
   echo Yes | execCmd parted "$image" ---pretend-input-tty unit B resizepart $partNumber ${newEndB}B >/dev/null 2>&1 
 }
 
-extendLastPartition() #EXPFUN [device]
+extendLastPartition() #EXPFUN [device/image]
 {
   local device=$1
   isGpt=$(hasGptLayout $device)
   if [ $isGpt = true ]; then
-    execCmd sgdisk -e $device > /dev/null 2>&1
+    vlog "GPT layout found"
+    execCmd sgdisk -e $device
+  else
+    vlog "No GPT layout found"
   fi
   
   lastPartitionNum=$(getLastPartitionNumber $device)
   execCmd parted --script $device \"resizepart $lastPartitionNum -1\"
 }
 
-#===== image =====
-
-fillWithZeros()  #EXPFUN [image]
+fillWithZeros() #EXPFUN [image]
 {
   local image="$1"
   local sectorSize=$(getSectorSize "$image")
@@ -763,6 +764,37 @@ restoreImage()  #EXPFUN [image] [device] [skip resizepart (true/false)]
 
 #===== misc =====
 
+isLastPartitionExt() #EXPFUN [image]
+{
+  local image="$1"
+  if $(parted --script "$image" print | awk '/./{line=$0} END{print line}' | grep -q 'ext[2-4]'); then
+    echo true
+  else
+    echo false
+  fi
+}
+
+getLastPartitionOffset() #EXPFUN [image]
+{
+  local image="$1"
+  local offset=$(sfdisk -l "$image" -o Start | tail -n 1)
+  echo $(trim "$offset")
+}
+
+getLastPartitionSize() #EXPFUN [image]
+{
+  local image="$1"
+  local size=$(sfdisk --bytes -l -o Size --bytes "$image" | tail -n1)
+  echo $(trim "$size")
+}
+
+getLastPartitionNumber() #EXPFUN [image]
+{
+  local image="$1"
+  local value=$(parted --script "$image" print | grep "." | tail -1 | awk '{print $1}')
+  echo $value
+}
+
 getBlockCount() #EXPFUN [device]
 {
   local device=$1
@@ -825,16 +857,6 @@ getPathFsType() #EXPFUN [path]
   echo $(trim "$value")
 }
 
-hasGptLayout() #EXPFUN [image]
-{
-  local image="$1"
-  if $(sfdisk -l "$image" 2>/dev/null | grep -q 'type: gpt'); then
-    echo true
-  else
-    echo false
-  fi
-}
-
 getMountPoints() #EXPFUN [device]
 {
   local device=$1
@@ -852,6 +874,16 @@ getMimeType() #EXPFUN [file]
   local file="$1"
   local value=$(file -N -b -i "$file" | awk '{print $1}')
   echo $(trim "${value%;}")
+}
+
+hasGptLayout() #EXPFUN [image]
+{
+  local image="$1"
+  if $(sfdisk -l "$image" 2>/dev/null | grep -q 'type: gpt'); then
+    echo true
+  else
+    echo false
+  fi
 }
 
 trim() {
