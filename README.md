@@ -133,10 +133,13 @@ ddarch shell
 and type "functions" to see the list of available functions. This can be useful, for example, when making images of large SD cards, when you want to skip copying unpartitioned space:
 
 ```
-sudo ddarch shell
+user@host:$ sudo ddarch shell
 ddarch:>~# shrinkLastPartition /dev/sdX
 ddarch:>~# exit
-sudo ddarch archive --skip-unpart -i /dev/sdX
+user@host:$ sudo ddarch archive --skip-unpart -i /dev/sdX
+user@host:$ sudo ddarch shell
+ddarch:>~# extendLastPartition /dev/sdX
+ddarch:>~# exit
 ```
 
  [Back to top](#table-of-contents)

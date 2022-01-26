@@ -101,7 +101,7 @@
 
 SCRIPT_NAME=ddarch
 SCRIPT_FILENAME=$(basename "$0")
-SCRIPT_VERSION=0.1.7
+SCRIPT_VERSION=0.1.6
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 #set -e          # exit on command errors
@@ -452,7 +452,7 @@ archiveImageOrDevice()
   
   archiveImageFile "$imageFile"
 
-  if [ $tmpImage = true ]; then
+  if [ $tmpImage = true ] && [ -f "$imageFile" ] ; then
     rm "$imageFile"
   fi
 }
@@ -764,7 +764,7 @@ cloneDevice() #EXPFUN [device/image] [output] [skip unpartitioned space (true/fa
 
     # add lba (finally lba * sector size) to fit backup gpt table
     # if no gpt table is present, returned lba is 0
-    count=$(($endSector + $lba))
+    count=$(($endSector + $lba + 1))
     
     local sectorSizeB=$(getSectorSize "$input")
     ddArgs="bs=$sectorSizeB count=$count $ddArgs"
