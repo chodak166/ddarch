@@ -446,7 +446,7 @@ archiveImageOrDevice()
   else
     local outFilename=
     imageFile="$tmpWorkDir"/$(basename "$unarchivedOutput")
-    cloneDevice "$input" "$imageFile" $skipUnpart "$ddArgs"
+    clone "$input" "$imageFile" $skipUnpart "$ddArgs"
     local tmpImage=true
   fi
   
@@ -534,7 +534,7 @@ assertInputExists()
 
 assertOutputSpecified()
 {
-  test -z "$output" && (elog "No output specified" && exit 1)
+  test -z "$output" && (elog "No output specified" && exit 1) ||:
 }
 
 assertNoOutputExists()
@@ -546,6 +546,7 @@ assertRoot()
 {
   if [[ $EUID -ne 0 ]]; then
     if ! confirm "This script is meant to be run as root user, do you want to continue without root privileges?"; then
+      errorNotice=false
       exit 1
     fi
   fi 
@@ -750,7 +751,7 @@ truncateImage()  #EXPFUN [image] [tail size]
   fi
 }
 
-cloneDevice() #EXPFUN [device/image] [output] [skip unpartitioned space (true/false)] [dd args]
+clone() #EXPFUN [device/image] [output] [skip unpartitioned space (true/false)] [dd args]
 {
   local input="$1"
   local output="$2"
