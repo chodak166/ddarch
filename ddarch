@@ -379,7 +379,9 @@ assertNoTmpfsTemp()
   if [ $fsType = tmpfs ]; then
     alternativeWorkDir="$HOME/ddarch.tmp."$(date +%s)
     if confirm "It looks like $tmpWorkDir is a mounted tmpfs ramdisk. Do you want to use $alternativeWorkDir instead?"; then
-      if [ ! "$(ls -A $tmpWorkDir)" ]; then rmdir $tmpWorkDir; fi
+      if [ ! "$(ls -A $tmpWorkDir)" ]; then 
+        rmdir $tmpWorkDir
+      fi
       tmpWorkDir="$alternativeWorkDir"
       mkdir -p "$tmpWorkDir"
       ilog "Using: $tmpWorkDir"
@@ -438,6 +440,11 @@ archiveImageOrDevice()
   ilog "Archiving $input as $output"
   
   local inputType=$(getInputType)  
+
+  if [[ "$inputType" == "device" ]]; then
+    assertNotInUse "$input"
+  fi
+
   local tmpImage=false
 
   if [ $inPlace = true ] && ! confirm "Using in-place mode with a block device is invasive and may result in data loss. Continue?"; then
@@ -727,8 +734,7 @@ fillWithZeros() #EXPFUN [device/image]
   local offsets=( $(getStartOffsets "$image") )
   for offset in "${offsets[@]}"
   do
-    ilog "Filling image partition (offset: $offset) with zeroes"
-    
+  
     local offsetBytes=$(($sectorSize * $offset))
     loDevice=$(losetup -f)
     execCmd losetup -o $offsetBytes $loDevice "$image"
@@ -737,10 +743,14 @@ fillWithZeros() #EXPFUN [device/image]
     execCmd mount $loDevice $tmpMountDir
     
     local space=$(getAvailableSpace $tmpMountDir)
-    local zerosFile="$tmpMountDir/zeros.bin"
-    execCmd head -c $space /dev/zero > "$zerosFile"
-    execCmd sync
-    rm "$zerosFile"
+    ilog "Filling image partition (offset: $offset) with zeroes (${space}B)"
+  
+    if [ $space -gt 0 ]; then
+      local zerosFile="$tmpMountDir/zeros.bin"
+      execCmd head -c $space /dev/zero > "$zerosFile" ||:
+      execCmd sync
+      rm "$zerosFile"
+    fi
     
     execCmd umount "$tmpMountDir"
     execCmd losetup -d $loDevice
