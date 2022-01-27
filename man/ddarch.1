@@ -48,7 +48,7 @@ additional empty space left in the shrunk partition (1MiB by default)
 additional empty space left in the truncated image (1MiB by default)
 .TP
 \fB\-\-skip\-unpart\fR
-do not read input after last parition end sector
+do not read input data after the end sector of the last partition
 .TP
 \fB\-\-no\-resizepart\fR
 do not resize the last partition
@@ -60,7 +60,7 @@ do not truncate the image
 do not fill empty space with zeros
 .TP
 \fB\-\-in\-place\fR
-edit input file when it's an image (and remove after compression)
+allow input editing (shrink, truncate, remove image) to save space and allow direct compression
 .TP
 \fB\-\-mount\-dir\fR [dir]
 temporary mount location; defaults to \fI\,/tmp/ddarch.mnt\/\fP.<timestamp>
@@ -115,6 +115,11 @@ Create an archive from a block device (sdx) with the default output name
 .IP
 ddarch \-i /dev/sdx # (the same as ddarch archive \-i /dev/sdx)
 .PP
+Fast clone (invasive) \- prepare the input device and create minimal archive without the unpartitioned space
+(shrink last partition, fill with zeroes, compress partitions on the fly, extend last partition):
+.IP
+ddarch \-i /dev/sdx \-\-in\-place \-\-skip\-unpart
+.PP
 Create ZIP archive from a block device (sdx) without resizing and truncating the output image:
 .IP
 ddarch \-i /dev/sdx \-\-no\-resizepart \-\-no\-truncate \-\-arch\-type zip \-\-name raspbian\-buster
@@ -128,7 +133,7 @@ Resize and truncate given image (non\-invasive, requires extra space):
 .IP
 ddarch \-i my_image.img \-o my_image_min.img \-\-arch\-type none
 .PP
-Resize and truncate given image (invasive! no extra space needed):
+Resize and truncate given image (invasive, no extra space needed):
 .IP
 ddarch \-i my_image.img \-o my_image_min.img \-\-arch\-type none \-\-in\-place
 .PP

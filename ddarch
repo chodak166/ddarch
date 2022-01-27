@@ -30,11 +30,11 @@
 ##   -n, --name [string]            replace "image" suffix of the output file name with the given name
 ##   --resizepart-tail [bytes]      additional empty space left in the shrunk partition (1MiB by default)
 ##   --truncate-tail [bytes]        additional empty space left in the truncated image (1MiB by default)
-##   --skip-unpart                  do not read input after last parition end sector
+##   --skip-unpart                  do not read input data after the end sector of the last partition
 ##   --no-resizepart                do not resize the last partition
 ##   --no-truncate                  do not truncate the image
 ##   --no-zero                      do not fill empty space with zeros
-##   --in-place                     edit input file when it's an image (and remove after compression)
+##   --in-place                     allow input editing (shrink, truncate, remove image) to save space and allow direct compression
 ##   --mount-dir [dir]              temporary mount location; defaults to /tmp/ddarch.mnt.<timestamp>
 ##
 ##
@@ -69,6 +69,11 @@
 ##
 ##   $SCRIPT_FILENAME -i /dev/sdx # (the same as $SCRIPT_FILENAME archive -i /dev/sdx)
 ##
+## Fast clone (invasive) - prepare the input device and create minimal archive without the unpartitioned space
+## (shrink last partition, fill with zeroes, compress partitions on the fly, extend last partition):
+##
+##   $SCRIPT_FILENAME -i /dev/sdx --in-place --skip-unpart
+##
 ## Create ZIP archive from a block device (sdx) without resizing and truncating the output image:
 ## 
 ##   $SCRIPT_FILENAME -i /dev/sdx --no-resizepart --no-truncate --arch-type zip --name raspbian-buster
@@ -82,7 +87,7 @@
 ##
 ##   $SCRIPT_FILENAME -i my_image.img -o my_image_min.img --arch-type none
 ## 
-## Resize and truncate given image (invasive! no extra space needed):
+## Resize and truncate given image (invasive, no extra space needed):
 ##
 ##   $SCRIPT_FILENAME -i my_image.img -o my_image_min.img --arch-type none --in-place
 ##
@@ -135,7 +140,6 @@ skipUnpart=false
 noResize=false
 noTruncate=false
 noZero=false
-noCompress=false
 noExtend=false
 quiet=false
 verbose=false
@@ -436,18 +440,22 @@ archiveImageOrDevice()
   local inputType=$(getInputType)  
   local tmpImage=false
 
+  if [ $inPlace = true ] && ! confirm "Using in-place mode with a block device is invasive and may result in data loss. Continue?"; then
+      errorNotice=false
+      exit 0
+  fi
+
   if [ $inPlace = true ]; then
     if [[ "$inputType" == "device" ]]; then
-      elog "The '--in-place' flag cannot be used with the device given as input, aborting"
-      exit 1
+      cloneDeviceInvasive
+      return 0
     fi
-    
     local imageFile="$input"
-  else
+  else # use additional image
     local outFilename=
-    imageFile="$tmpWorkDir"/$(basename "$unarchivedOutput")
+    local imageFile="$tmpWorkDir"/$(basename "$unarchivedOutput")
     clone "$input" "$imageFile" $skipUnpart "$ddArgs"
-    local tmpImage=true
+    tmpImage=true
   fi
   
   archiveImageFile "$imageFile"
@@ -492,19 +500,25 @@ verifyPartitions()
   done
 }
 
+cloneDeviceInvasive()
+{
+  tryShrink "$input"
+  
+  if [ $noZero = false ]; then
+    fillWithZeros "$input"
+  fi
+  
+  cloneIntoArchive "$input" "$output" "$archType" $skipUnpart "$ddArgs"
+
+  extendLastPartition "$input"
+}
+
 archiveImageFile()
 {
   local imageFile="$1"
   vlog "Archiving image file: $imageFile"
   
-  if [ $noResize = false ]; then
-    isExt=$(isLastPartitionExt "$imageFile")
-    if [ $isExt = false ]; then
-      wlog "Shrinking non-ext (Linux) partitions not supported, skipping"
-    else
-      shrinkLastPartition "$imageFile" $shrinkTailSize
-    fi
-  fi
+  tryShrink "$imageFile"
   
   if [ $noZero = false ]; then
     fillWithZeros "$imageFile"
@@ -523,6 +537,19 @@ archiveImageFile()
     compressImage "$imageFile" "$output" $archType
     if [ $inPlace = true ]; then
       rm "$imageFile"
+    fi
+  fi
+}
+
+tryShrink()
+{
+  local device="$1"
+  if [ $noResize = false ]; then
+    isExt=$(isLastPartitionExt "$device")
+    if [ $isExt = false ]; then
+      wlog "Shrinking non-ext (Linux) partitions not supported, skipping"
+    else
+      shrinkLastPartition "$device" $shrinkTailSize
     fi
   fi
 }
@@ -547,7 +574,7 @@ assertRoot()
   if [[ $EUID -ne 0 ]]; then
     if ! confirm "This script is meant to be run as root user, do you want to continue without root privileges?"; then
       errorNotice=false
-      exit 1
+      exit 0
     fi
   fi 
 }
@@ -638,7 +665,7 @@ shrinkLastPartition() #EXPFUN [device/image] [tail size]
   isExt=$(isLastPartitionExt "$image")
   if [ $isExt = false ]; then
     wlog "Last partition does not look like Linux EXT partition, shrinking skipped"
-    return
+    return 0
   fi
   
   if [ -z "$tailSizeB" ]; then 
@@ -675,13 +702,17 @@ shrinkLastPartition() #EXPFUN [device/image] [tail size]
 
 extendLastPartition() #EXPFUN [device/image]
 {
-  local device=$1
+  local device="$1"
+
+  isExt=$(isLastPartitionExt "$device")
+  if [ $isExt = false ]; then
+    wlog "Last partition does not look like Linux EXT partition, extending skipped"
+    return 0
+  fi
+
   isGpt=$(hasGptLayout $device)
   if [ $isGpt = true ]; then
-    vlog "GPT layout found"
     execCmd sgdisk -e $device
-  else
-    vlog "No GPT layout found"
   fi
   
   lastPartitionNum=$(getLastPartitionNumber $device)
@@ -760,15 +791,7 @@ clone() #EXPFUN [device/image] [output] [skip unpartitioned space (true/false)] 
   local hasGpt=$(hasGptLayout "$input")
 
   if [ $skipUnpart = true ]; then
-    local lba=$(getFirstUsableLba "$input")
-    local endSector=$(getEndSector "$input")
-
-    # add lba (finally lba * sector size) to fit backup gpt table
-    # if no gpt table is present, returned lba is 0
-    count=$(($endSector + $lba + 1))
-    
-    local sectorSizeB=$(getSectorSize "$input")
-    ddArgs="bs=$sectorSizeB count=$count $ddArgs"
+    ddArgs=$(prependCountDdArgs "$input" "$ddArgs")
   fi
 
   execCmd dd if="$input" of="$output" status=progress $ddArgs
@@ -778,7 +801,33 @@ clone() #EXPFUN [device/image] [output] [skip unpartitioned space (true/false)] 
   fi
 }
 
-restoreImage()  #EXPFUN [image] [device] [skip resizepart (true/false)]
+
+cloneIntoArchive() #EXPFUN [device/image] [output] [archive type] [skip unpart (true/false)] [extra dd args]
+{
+  input="$1"
+  output="$2"
+  archType="$3"
+  skipUnpart="$4"
+  ddArgs="$5"
+
+  if [ $skipUnpart = true ]; then
+    ddArgs=$(prependCountDdArgs "$input" "$ddArgs")
+  fi
+
+  case $archType in
+    ('7z')
+      dd if="$input" status=progress $ddArgs | 7z a -si "$output";;
+    ('zip')
+      dd if="$input" status=progress $ddArgs | zip > "$output";;
+    ('tgz'|'tar.gz'|'tar')
+      newOutput=$(echo "$output" | sed 's/.tar.gz/.gz/g')
+      wlog "Cannot use tar with data stream, using gzip instead ($output -> $newOutput)"
+      dd if="$input" status=progress $ddArgs | gzip -c > "$newOutput";;
+  esac
+}
+
+
+restoreImage() #EXPFUN [image] [device] [skip resizepart (true/false)]
 {
   local image="$1"
   local device=$2
@@ -951,6 +1000,23 @@ findCacheDirs() #EXPFUN
   [ -z "$dirs" ] || dirs+='\n'
   dirs+=$(ls -d -1 "$HOME/$cachePrefix"* 2>/dev/null ||:)
   printf "$dirs"
+}
+
+prependCountDdArgs() #EXPFUN [device/image] [dd args]
+{
+  input="$1"
+  ddArgs="$2"
+
+  local lba=$(getFirstUsableLba "$input")
+  local endSector=$(getEndSector "$input")
+
+  # add lba (finally lba * sector size) to fit backup gpt table
+  # if no gpt table is present, returned lba is 0
+  count=$(($endSector + $lba + 1))
+  
+  local sectorSizeB=$(getSectorSize "$input")
+  ddArgs="bs=$sectorSizeB count=$count $ddArgs"
+  echo "$ddArgs"
 }
 
 trim() {

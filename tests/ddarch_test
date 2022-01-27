@@ -148,6 +148,7 @@ testRestore()
   assertEqual $size 58769408 "Restored partition size should be 58769408"
 }
 
+
 # ---------- CLI ------------
 
 test_cliArchiveMinimalMbr()
@@ -301,6 +302,50 @@ test_cliArchiveCorruptedMbr()
   
   assertEqual $mimeType "application/x-7z-compressed" "Archived output MIME type should be application/x-7z-compressed"
   assertGreater $inputSize $outputSize "The input size should be greater than the output size"
+}
+
+test_cliArchiveGptInPlaceDeviceSkipUnpart()
+{
+  setupTestFiles
+  local input=$TEST_GPT_PRI_IMAGE
+  local device=$(losetup --show -f "$input")
+  local output=$TEST_TMP_DIR/gpt_pri_out_inplace.7z
+  
+  local inputSizeBefore=$(stat --printf="%s" $input)
+  
+  "$DDARCH_PATH" archive --yes --input $device \
+    --output $output \
+    --arch-type 7z \
+    --in-place \
+    --skip-unpart \
+    --quiet
+    
+  losetup -d $device
+  local mimeType=$(getMimeType $output)
+  
+  assertEqual $mimeType "application/x-7z-compressed" "The output file MIME type should be application/x-7z-compressed"
+}
+
+test_cliArchiveMbrInPlaceDeviceSkipUnpart()
+{
+  setupTestFiles
+  local input=$TEST_MBR_PRI_IMAGE
+  local device=$(losetup --show -f "$input")
+  local output=$TEST_TMP_DIR/gpt_pri_out_inplace.7z
+  
+  local inputSizeBefore=$(stat --printf="%s" $input)
+  
+  "$DDARCH_PATH" archive --yes --input $device \
+    --output $output \
+    --arch-type 7z \
+    --in-place \
+    --skip-unpart \
+    --quiet
+    
+  losetup -d $device
+  local mimeType=$(getMimeType $output)
+  
+  assertEqual $mimeType "application/x-7z-compressed" "The output file MIME type should be application/x-7z-compressed"
 }
 
 test_cliRestoreMbrImage()
