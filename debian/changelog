@@ -1,4 +1,4 @@
-ddarch (0.1.6-1) focal; urgency=medium
+ddarch (0.1.6-2) focal; urgency=medium
 
   * Added --skip-unpart archive parameter
   * Enabled in-place mode when cloning devices
@@ -11,7 +11,7 @@ ddarch (0.1.6-1) focal; urgency=medium
   * Fixed minor cleanup bugs
   * Fixed zeroing partitions with no free space
 
- -- chodak166 <chodak166@op.pl>  Fri, 08 Jan 2022 09:40:00 +0100
+ -- chodak166 <chodak166@op.pl>  Fri, 28 Jan 2022 09:40:00 +0100
 
 ddarch (0.1.5-1) bionic; urgency=medium
 
