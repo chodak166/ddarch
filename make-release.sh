@@ -68,7 +68,7 @@ mkdir $TMP_DIR || rm -r $TMP_DIR/*
 git archive --format=tar --prefix=$PREFIX/ HEAD | gzip -c > $TMP_DIR/$PREFIX.orig.tar.gz
 
 git checkout $PACKAGE_BRANCH
-gbp import-orig $TMP_DIR/${PACKAGE}_${VERSION}.orig.tar.gz
+gbp import-orig --upstream-version=${VERSION} $TMP_DIR/${PACKAGE}_${VERSION}.orig.tar.gz
 gbp buildpackage -us -uc \
   --git-ignore-new \
   --git-arch='all' \
