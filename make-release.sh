@@ -16,7 +16,7 @@ set -e
 #set -x
 
 PACKAGE=ddarch
-VERSION=$(./ddarch --version | grep -Eo '[0-9.]+')
+VERSION=${VERSION:-$(./ddarch --version | grep -Eo '[0-9.]+')}
 PREFIX=${PACKAGE}_${VERSION}
 TMP_DIR=/tmp/${PACKAGE}_package
 OUT_DIR=./package
