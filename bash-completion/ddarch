@@ -28,11 +28,12 @@ _ddarch_completions()
       --name   
       --resizepart-tail
       --truncate-tail
+      --skip-unpart          
       --no-resizepart          
       --no-truncate            
       --no-zero                
       --in-place               
-      --mnt-dir
+      --mount-dir
   '
   
   local CMD_RESTORE_OPTIONS='
@@ -46,7 +47,8 @@ _ddarch_completions()
   # see if the user selected a command already
   local COMMANDS=(
     "archive"
-    "restore")
+    "restore"
+    "shell")
   
   local command i
   for (( i=0; i < ${#words[@]}-1; i++ )); do
@@ -65,6 +67,9 @@ _ddarch_completions()
       	restore)
       	  COMPREPLY=( $( compgen -W "$CMD_RESTORE_OPTIONS $GLOBAL_OPTIONS" -- "$cur" ) )
 	        return 0;;
+      	shell)
+      	  COMPREPLY=( )
+	        return 0;;
 	      *)
 	        COMPREPLY=( $( compgen -W "$CMD_ARCHIVE_OPTIONS $GLOBAL_OPTIONS $INFO_OPTIONS" -- "$cur" ) )
           return 0;;
@@ -78,7 +83,7 @@ _ddarch_completions()
     COMPREPLY=() # fall to the -o default
     return 0;;
   # directories completion
-  --mnt-dir|--work-dir)
+  --mount-dir|--work-dir)
     COMPREPLY=( $( compgen -d -- "$cur" ) )
     return 0;;
   esac
