@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Requires: git git-buildpackage help2man
+
 set -e
 #set -x
 
