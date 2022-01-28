@@ -1,4 +1,4 @@
-ddarch (0.1.6-2) focal; urgency=medium
+ddarch (0.1.6-1) focal; urgency=medium
 
   * Added --skip-unpart archive parameter
   * Enabled in-place mode when cloning devices
