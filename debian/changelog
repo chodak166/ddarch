@@ -1,3 +1,18 @@
+ddarch (0.1.6-1) focal; urgency=medium
+
+  * Added --skip-unpart archive parameter
+  * Enabled in-place mode when cloning devices
+  * Added shell command (interactive ddarch subshell)
+  * Added lingering cache directories scan during cleaning
+  * Added device mount status check before restoring
+  * Changed --mnt-dir parameter name to --mount-dir
+  * Fixed console closing after sourcing
+  * Fixed working directory tmpfs check
+  * Fixed minor cleanup bugs
+  * Fixed zeroing partitions with no free space
+
+ -- chodak166 <chodak166@op.pl>  Fri, 08 Jan 2022 09:40:00 +0100
+
 ddarch (0.1.5-1) bionic; urgency=medium
 
   * Fixed execution break when archiving corrupted devices
