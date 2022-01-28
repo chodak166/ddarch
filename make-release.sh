@@ -1,6 +1,15 @@
 #!/bin/bash
 
-# Requires: git git-buildpackage help2man
+# Requires: git git-buildpackage help2man debhelper
+# Steps:
+# - switch to debian-package branch
+# - update debian/changelog file and commit (do not merge any changes)
+# - switch to master branch
+# - make sure there is no conflicting tag: git tag --delete upstream/x.x.x
+# - push all the changes
+# - run ./make-release.sh
+# - sign the package: debsign -k <key> ./package/<package>.changes (e.g.: debsign -k chodak166 ./ddarch_0.1.6-1_source.changes)
+# - upload files to PPA: dput -dlfP <ppa> <file>.changes (e.g.: dput -dlfP ppa:chodak166/ppa ddarch_0.1.6-1_source.changes)
 
 set -e
 #set -x
