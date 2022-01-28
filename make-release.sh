@@ -8,6 +8,7 @@
 # - make sure there is no conflicting tag: git tag --delete upstream/x.x.x
 # - push all the changes
 # - run ./make-release.sh
+# - you can run test-build on debian-package branch by running 'debuild -b -uc -us'
 # - sign the package: debsign -k <key> ./package/<package>.changes (e.g.: debsign -k chodak166 ./ddarch_0.1.6-1_source.changes)
 # - upload files to PPA: dput -dlfP <ppa> <file>.changes (e.g.: dput -dlfP ppa:chodak166/ppa ddarch_0.1.6-1_source.changes)
 
