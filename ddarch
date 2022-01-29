@@ -34,6 +34,7 @@
 ##   --no-resizepart                do not resize the last partition
 ##   --no-truncate                  do not truncate the image
 ##   --no-zero                      do not fill empty space with zeros
+##   --no-space-check               do not estimate required disk space and skip the assertions
 ##   --in-place                     allow input editing (shrink, truncate, remove image) to save space and allow direct compression
 ##   --mount-dir [dir]              temporary mount location; defaults to /tmp/ddarch.mnt.<timestamp>
 ##
@@ -106,7 +107,7 @@
 
 SCRIPT_NAME=ddarch
 SCRIPT_FILENAME=$(basename "$0")
-SCRIPT_VERSION=0.1.6
+SCRIPT_VERSION=0.1.7
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 #set -e          # exit on command errors
@@ -126,6 +127,7 @@ STDOUT=`readlink -f /proc/$$/fd/1`
 STDERR=`readlink -f /proc/$$/fd/2`
 declare -A MIN_ARGS
 MIN_ARGS+=( ["archive"]=1 ["restore"]=2 ["shell"]=0 )
+COMPRESSION_RATE=0.75 # required free space estimation
 
 args=($@)
 commandName=archive
@@ -147,6 +149,7 @@ allYes=false
 inPlace=false
 verify=false
 errorNotice=true
+noSpaceCheck=false
 
 loDevice=
 unarchivedOutput=
@@ -234,6 +237,8 @@ readOptions()
         noTruncate=true;;
       ('--no-zero')
         noZero=true;;
+      ('--no-space-check')
+        noSpaceCheck=true;;
       ('--no-extend')
         noExtend=true;;
       ('--verify')
@@ -276,7 +281,7 @@ readOptions()
 listFunctions() 
 {
   grep '#EXPFUN' "$SCRIPT_DIR/$SCRIPT_FILENAME" \
-  | grep -v 'grep'| sed 's/#EXPFUN //g' | sed 's/()//g' \
+  | grep -v 'grep'| sed 's/#EXPFUN//g' | sed 's/()//g' | sed 's/  / /g' \
   | awk -F: '{if(f!=$1)print ""; f=$1; print " " $0;}'
   echo -ne "\n"
 } 2>/dev/null
@@ -303,6 +308,7 @@ run()
       setupOutputName
       assertNoTmpfsTemp
       assertNoOutputFile
+      [ $noSpaceCheck = true ] || assertEnoughSpace
       archiveImageOrDevice;;
     ('restore')
       assertInputExists
@@ -552,10 +558,11 @@ tryShrink()
 {
   local device="$1"
   if [ $noResize = false ]; then
-    isExt=$(isLastPartitionExt "$device")
+    isExt=$(isLastPartitionExtFs "$device")
     if [ $isExt = false ]; then
       wlog "Shrinking non-ext (Linux) partitions not supported, skipping"
     else
+      vlog "Shrinking the last partition with tail $shrinkTailSize"
       shrinkLastPartition "$device" $shrinkTailSize
     fi
   fi
@@ -658,6 +665,88 @@ runDdarchSubshell()
     $aliases")
 }
 
+estimateCacheSize()
+{
+  local -n resultRef=$1
+  # no cache: --in-place
+  if [ $inPlace = true ]; then
+    resultRef=0
+    return 0
+  fi
+
+  # full image: no --skip-unpart
+  if [ $skipUnpart = false ]; then
+    resultRef=$(getDeviceSize "$input")
+    return 0
+  fi
+
+  # min image: --skip-unpart + no --no-resize
+  if [ $skipUnpart = true ] && [ $noResize = false ]; then
+    shrinkLastPartition "$input" $shrinkTailSize true # dry run
+    resultRef=$SHRUNK_END_BYTE
+  fi
+
+  # medium image: --skip-unpart + --no-resize
+  local endSector=$(getEndSector "$input")
+  local sectorSizeB=$(getSectorSize "$input")
+  resultRef=$(($endSector * $sectorSizeB))
+}
+
+estitmateOutputSize()
+{
+  local -n resultRef=$1
+  local cacheSize=$2
+  local baseSize=0
+
+  if [ $inPlace = true ]; then
+    baseSize=$(getDeviceSize "$input")
+  else
+    baseSize=$cacheSize
+  fi
+ 
+  if [[ "$archType" != "none" ]]; then
+    baseSize=$(calc "$baseSize*$COMPRESSION_RATE")
+    baseSize=${baseSize%.*}
+  fi
+
+  resultRef=$baseSize
+}
+
+assertEnoughSpace()
+{
+  local cacheSize
+  local outputSize
+  estimateCacheSize cacheSize
+  estitmateOutputSize outputSize $cacheSize
+
+  vlog "Estimated cacheSize: $(calc $cacheSize/1024/1024)MB"
+  vlog "Estimated outputSize: $(calc $outputSize/1024/1024)MB"
+
+  local workDirDev=$(getDevice "$tmpWorkDir")
+  local outputDir=$(readlink "$output")
+  outputDir=$(dirname "$outputDir")
+  local outputDirDev=$(getDevice "$outputDir")
+
+  declare -A requiredSpace
+  requiredSpace+=( ["$workDirDev"]=0 ["$outputDirDev"]=0 ) # may be the same device
+
+  requiredSpace["$workDirDev"]=$cacheSize
+  requiredSpace["$outputDirDev"]=$((${requiredSpace["$outputDirDev"]} + $outputSize))
+
+
+  local freeCacheSpace=$(getAvailableSpace "$tmpWorkDir")
+  if [ ${requiredSpace["$workDirDev"]} -ge $freeCacheSpace ]; then
+    elog "Not enough free working space on $workDirDev ($tmpWorkDir) - about $(calc ${requiredSpace["$workDirDev"]}/1024/1024)MB required, $(calc ${freeCacheSpace}/1024/1024)MB available. Consider using '--no-space-check' or '--in-place' flag."
+    exit 1
+  fi
+
+  local freeOutputSpace=$(getAvailableSpace "$outputDir")
+  if [ ${requiredSpace["$outputDirDev"]} -ge $freeCacheSpace ]; then
+    elog "Not enough free space for output on $outputDirDev ($outputDir) - about $(calc ${requiredSpace["$outputDirDev"]}/1024/1024)MB required, $(calc ${freeOutputSpace}/1024/1024)MB available. Consider using '--no-space-check' or '--in-place' flag."
+    exit 1
+  fi
+}
+
 #========== core functions ==========
 
 shrinkLastPartition() #EXPFUN [device/image] [tail size]
@@ -666,10 +755,10 @@ shrinkLastPartition() #EXPFUN [device/image] [tail size]
 
   local image="$1"
   local tailSizeB="$2"
-  
-  vlog "Shrinking the last partition with tail $tailSizeB"
-  
-  isExt=$(isLastPartitionExt "$image")
+  local dryRun=$3
+  dryRun=${dryRun:-false}
+
+  isExt=$(isLastPartitionExtFs "$image")
   if [ $isExt = false ]; then
     wlog "Last partition does not look like Linux EXT partition, shrinking skipped"
     return 0
@@ -693,25 +782,30 @@ shrinkLastPartition() #EXPFUN [device/image] [tail size]
   local minSizeB=$(($minSizeBk * $blockSizeB))
   local currentSizeB=$(getLastPartitionSize "$image")
 
-  if [ $currentSizeB -le $minSizeB ]; then
+  if [ $dryRun = false ] && [ $currentSizeB -le $minSizeB ]; then
     wlog "The esimated size after shrinking (${minSizeB}B) is bigger than the current one (${currentSizeB}B), skipping"
     return 0
   fi
 
-  execCmd resize2fs $loDevice $minSizeBk
-  execCmd losetup -d $loDevice
-
-  partNumber=$(getLastPartitionNumber "$image")
-
   local newEndB=$(($offsetB + $minSizeB + $tailSizeB))
-  echo Yes | execCmd parted "$image" ---pretend-input-tty unit B resizepart $partNumber ${newEndB}B >/dev/null 2>&1 
+
+  if [ $dryRun = false ]; then
+    execCmd resize2fs $loDevice $minSizeBk
+    execCmd losetup -d $loDevice
+
+    partNumber=$(getLastPartitionNumber "$image")
+
+    echo Yes | execCmd parted "$image" ---pretend-input-tty unit B resizepart $partNumber ${newEndB}B >/dev/null 2>&1 
+  else
+    SHRUNK_END_BYTE=$newEndB
+  fi
 }
 
 extendLastPartition() #EXPFUN [device/image]
 {
   local device="$1"
 
-  isExt=$(isLastPartitionExt "$device")
+  isExt=$(isLastPartitionExtFs "$device")
   if [ $isExt = false ]; then
     wlog "Last partition does not look like Linux EXT partition, extending skipped"
     return 0
@@ -758,7 +852,7 @@ fillWithZeros() #EXPFUN [device/image]
   done
 }
 
-truncateImage()  #EXPFUN [image] [tail size]
+truncateImage() #EXPFUN [image] [tail size]
 {
   local image="$1"
   local tailSize="$2"
@@ -874,7 +968,7 @@ fixGptBackup() #EXPFUN [device/image]
 
 #===== misc =====
 
-isLastPartitionExt() #EXPFUN [image]
+isLastPartitionExtFs() #EXPFUN [image]
 {
   local image="$1"
   if $(parted --script "$image" print | awk '/./{line=$0} END{print line}' | grep -q 'ext[2-4]'); then
@@ -950,7 +1044,25 @@ getAvailableSpace() #EXPFUN [path]
 {
   local path="$1"
   local value=$(df -P "$path" | awk 'NR==2 {print $4}')
+  echo $(($value * 1024)) # df output is 1024B blocks
+}
+
+getDevice() #EXPFUN [path]
+{
+  local path="$1"
+  local value=$(df -P "$path" | awk 'NR==2 {print $1}')
   echo $value
+}
+
+getDeviceSize() #EXPFUN [device/image]
+{
+  local input="$1"
+  local fileType=$(getMimeType "$input")
+  if [[ "$fileType" == "inode/blockdevice" ]]; then
+    echo -n $(blockdev --getsize64 "$input")
+  else
+    echo -n $(stat --printf="%s" "$input")
+  fi
 }
 
 getEndSector() #EXPFUN [device/image]
@@ -1012,7 +1124,7 @@ findCacheDirs() #EXPFUN
   printf "$dirs"
 }
 
-prependCountDdArgs() #EXPFUN [device/image] [dd args]
+prependCountDdArgs()
 {
   input="$1"
   ddArgs="$2"
@@ -1029,11 +1141,18 @@ prependCountDdArgs() #EXPFUN [device/image] [dd args]
   echo "$ddArgs"
 }
 
-trim() {
+trim()
+{
   local string="$*"
   local string="${string#"${string%%[![:space:]]*}"}"
-  local string="${string%"${string##*[![:space:]]}"}"   
+  local string="${string%"${string##*[![:space:]]}"}"
   printf '%s' "$string"
+}
+
+calc()
+{
+  exp=$1
+  awk "BEGIN {OFMT=\"%f\"; print $exp}";
 }
 
 #========== helper functions ==========

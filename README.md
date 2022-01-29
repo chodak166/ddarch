@@ -218,6 +218,7 @@ The `archive` command options:
   --no-resizepart                do not resize the last partition
   --no-truncate                  do not truncate the image
   --no-zero                      do not fill empty space with zeros
+  --no-space-check               do not estimate required disk space and skip the assertions
   --in-place                     edit input (shrink, truncate, remove image) to save space and allow direct compression
   --mount-dir [dir]              temporary mount location; defaults to /tmp/ddarch.mnt.<timestamp>
 ```
