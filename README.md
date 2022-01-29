@@ -9,7 +9,7 @@
 2. [Quick start](#quick-start)  
 	2.1. [Archiving](#archiving)  
 	2.2. [Restoring](#restoring)  
-	2.3. [Interactive shell](#shell)  
+	2.3. [Interactive shell](#interactive-shell)  
 	2.4. [Sourcing](#sourcing)  
 3. [Installation](#installation)  
   3.1. [Installing ddarch on Ubuntu](#installing-ddarch-on-ubuntu)  
