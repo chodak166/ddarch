@@ -107,7 +107,7 @@
 
 SCRIPT_NAME=ddarch
 SCRIPT_FILENAME=$(basename "$0")
-SCRIPT_VERSION=0.1.7
+SCRIPT_VERSION=0.1.8
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 #set -e          # exit on command errors
@@ -151,7 +151,7 @@ verify=false
 errorNotice=true
 noSpaceCheck=false
 
-loDevice=
+gLoDevice=
 unarchivedOutput=
 
 #===========================================
@@ -327,8 +327,8 @@ cleanup()
 {
   retCode=$?
   
-  if [ ! -z $loDevice ] && findmnt -rno SOURCE,TARGET $loDevice >/dev/null; then
-    losetup -d $loDevice
+  if [ ! -z $gLoDevice ] && findmnt -rno SOURCE,TARGET $gLoDevice >/dev/null; then
+    losetup -d $gLoDevice
   fi
   
   if findmnt -rno SOURCE,TARGET $tmpMountDir >/dev/null; then
@@ -502,14 +502,14 @@ verifyPartitions()
     
     sectorSize=$(getSectorSize $output)
     local offsetBytes=$(($sectorSize * $offset))
-    loDevice=$(losetup -f)
-    execCmd losetup --offset $offsetBytes $loDevice $output
-    if fsck -t ext2,ext3,ext4,vfat -y $loDevice; then
+    gLoDevice=$(losetup -f)
+    execCmd losetup --offset $offsetBytes $gLoDevice $output
+    if fsck -t ext2,ext3,ext4,vfat -y $gLoDevice; then
       ilog "${GREEN}Partition verified${NC}"
     else
       elog "Partition starting at sector $offset cannot be positively verified"
     fi
-    execCmd losetup -d $loDevice
+    execCmd losetup -d $gLoDevice
   done
 }
 
@@ -749,6 +749,7 @@ assertEnoughSpace()
 
 #========== core functions ==========
 
+#TODO: split and refactor
 shrinkLastPartition() #EXPFUN [device/image] [tail size]
 {
   # S - sectors, B - bytes, Bk - blocks
@@ -757,11 +758,17 @@ shrinkLastPartition() #EXPFUN [device/image] [tail size]
   local tailSizeB="$2"
   local dryRun=$3
   dryRun=${dryRun:-false}
+  local fsckDone=false
 
-  isExt=$(isLastPartitionExtFs "$image")
+  local isExt=$(isLastPartitionExtFs "$image")
   if [ $isExt = false ]; then
     wlog "Last partition does not look like Linux EXT partition, shrinking skipped"
     return 0
+  fi
+
+  local isGpt=$(hasGptLayout "$image")
+  if [ $dryRun = false ] && [ $isGpt = true ]; then
+    execCmd sgdisk -e "$image"
   fi
   
   if [ -z "$tailSizeB" ]; then 
@@ -772,13 +779,19 @@ shrinkLastPartition() #EXPFUN [device/image] [tail size]
   local offsetS=$(getLastPartitionOffset "$image")
   local offsetB=$(($offsetS * $sectorSizeB))
   
-  loDevice=$(losetup -f)
+  gLoDevice=$(losetup -f)
  
-  execCmd losetup -o $offsetB $loDevice "$image"
-  execCmd 'e2fsck -y -f $loDevice ||:'
+  execCmd losetup --nooverlap --sector-size $sectorSizeB --offset $offsetB $gLoDevice "$image"
 
-  local blockSizeB=$(getBlockSize $loDevice)
-  local minSizeBk=$(estimateBlocksAfterShrink $loDevice)
+  local blockSizeB=$(getBlockSize $gLoDevice)
+  local minSizeBk=$(estimateBlocksAfterShrink $gLoDevice)
+
+  if [ -z "$minSizeBk" ] && confirm "Cannot estimate number of block after shrinking the last partition. Do you want to run fsck on ${image}?"; then
+    execCmd 'e2fsck -y -f $gLoDevice ||:'
+    minSizeBk=$(estimateBlocksAfterShrink $gLoDevice)
+    fsckDone=true
+  fi
+
   local minSizeB=$(($minSizeBk * $blockSizeB))
   local currentSizeB=$(getLastPartitionSize "$image")
 
@@ -790,8 +803,9 @@ shrinkLastPartition() #EXPFUN [device/image] [tail size]
   local newEndB=$(($offsetB + $minSizeB + $tailSizeB))
 
   if [ $dryRun = false ]; then
-    execCmd resize2fs $loDevice $minSizeBk
-    execCmd losetup -d $loDevice
+    [ $fsckDone = true ] || execCmd 'e2fsck -y -f $gLoDevice ||:'
+    execCmd resize2fs $gLoDevice $minSizeBk
+    execCmd losetup -d $gLoDevice
 
     partNumber=$(getLastPartitionNumber "$image")
 
@@ -803,21 +817,31 @@ shrinkLastPartition() #EXPFUN [device/image] [tail size]
 
 extendLastPartition() #EXPFUN [device/image]
 {
-  local device="$1"
+  local input="$1"
 
-  isExt=$(isLastPartitionExtFs "$device")
+  local isExt=$(isLastPartitionExtFs "$input")
   if [ $isExt = false ]; then
     wlog "Last partition does not look like Linux EXT partition, extending skipped"
     return 0
   fi
 
-  isGpt=$(hasGptLayout $device)
+  local isGpt=$(hasGptLayout "$input")
   if [ $isGpt = true ]; then
-    execCmd sgdisk -e $device
+    execCmd sgdisk -e "$input"
   fi
-  
-  lastPartitionNum=$(getLastPartitionNumber $device)
-  execCmd parted --script $device \"resizepart $lastPartitionNum -1\"
+
+  local sectorSizeB=$(getSectorSize "$input")
+  local offsetS=$(getLastPartitionOffset "$input")
+  local offsetB=$(($offsetS * $sectorSizeB))
+
+  gLoDevice=$(losetup -f)
+  execCmd losetup --nooverlap --sector-size $sectorSizeB --offset $offsetB $gLoDevice "$input"
+  execCmd 'e2fsck -y -f $gLoDevice ||:'
+  execCmd 'resize2fs $gLoDevice ||:'
+  losetup -d $gLoDevice
+
+  local lastPartitionNum=$(getLastPartitionNumber "$input")
+  execCmd parted --script "$input" \"resizepart $lastPartitionNum -1\"
 }
 
 fillWithZeros() #EXPFUN [device/image]
@@ -830,11 +854,11 @@ fillWithZeros() #EXPFUN [device/image]
   do
   
     local offsetBytes=$(($sectorSize * $offset))
-    loDevice=$(losetup -f)
-    execCmd losetup -o $offsetBytes $loDevice "$image"
+    gLoDevice=$(losetup -f)
+    execCmd losetup -o $offsetBytes $gLoDevice "$image"
     test -d $tmpMountDir || mkdir -p $tmpMountDir
     
-    execCmd mount $loDevice $tmpMountDir
+    execCmd mount $gLoDevice $tmpMountDir
     
     local space=$(getAvailableSpace $tmpMountDir)
     ilog "Filling image partition (offset: $offset) with zeroes (${space}B)"
@@ -847,7 +871,7 @@ fillWithZeros() #EXPFUN [device/image]
     fi
     
     execCmd umount "$tmpMountDir"
-    execCmd losetup -d $loDevice
+    execCmd losetup -d $gLoDevice
     
   done
 }
