@@ -107,7 +107,7 @@
 
 SCRIPT_NAME=ddarch
 SCRIPT_FILENAME=$(basename "$0")
-SCRIPT_VERSION=0.1.8
+SCRIPT_VERSION=0.1.9
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 #set -e          # exit on command errors
@@ -841,11 +841,10 @@ extendLastPartition() #EXPFUN [device/image]
 
   gLoDevice=$(losetup -f)
   execCmd losetup --nooverlap --sector-size $sectorSizeB --partscan $gLoDevice "$input"
+  execCmd parted --script $gLoDevice \"resizepart $lastPartitionNum -1\"
   execCmd "e2fsck -y -f ${gLoDevice}p${lastPartitionNum} ||:"
   execCmd "resize2fs ${gLoDevice}p${lastPartitionNum} ||:"
   execCmd losetup -d $gLoDevice
-
-  execCmd parted --script "$input" \"resizepart $lastPartitionNum -1\"
 }
 
 fillWithZeros() #EXPFUN [device/image]
