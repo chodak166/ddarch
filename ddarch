@@ -490,6 +490,8 @@ restoreArchiveOrImage()
   if [ $verify = true ]; then
     verifyPartitions $output
   fi
+
+  execCmd partprobe -s
 }
 
 verifyPartitions() 
@@ -835,13 +837,14 @@ extendLastPartition() #EXPFUN [device/image]
   local offsetS=$(getLastPartitionOffset "$input")
   local offsetB=$(($offsetS * $sectorSizeB))
 
-  gLoDevice=$(losetup -f)
-  execCmd losetup --nooverlap --sector-size $sectorSizeB --offset $offsetB $gLoDevice "$input"
-  execCmd "e2fsck -y -f $gLoDevice ||:"
-  execCmd "resize2fs $gLoDevice ||:"
-  losetup -d $gLoDevice
-
   local lastPartitionNum=$(getLastPartitionNumber "$input")
+
+  gLoDevice=$(losetup -f)
+  execCmd losetup --nooverlap --sector-size $sectorSizeB --partscan $gLoDevice "$input"
+  execCmd "e2fsck -y -f ${gLoDevice}p${lastPartitionNum} ||:"
+  execCmd "resize2fs ${gLoDevice}p${lastPartitionNum} ||:"
+  execCmd losetup -d $gLoDevice
+
   execCmd parted --script "$input" \"resizepart $lastPartitionNum -1\"
 }
 
