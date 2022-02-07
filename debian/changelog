@@ -1,3 +1,10 @@
+ddarch (0.1.9-1) focal; urgency=medium
+
+  * Fixed extending last partition after shrinking with --in-place
+  * Minor CLI fixes
+
+ -- chodak166 <chodak166@op.pl>  Mon, 07 Feb 2022 12:11:00 +0100 
+
 ddarch (0.1.8-1) focal; urgency=medium
 
   * Added fixing corrupted GPT partitions before shrinking
