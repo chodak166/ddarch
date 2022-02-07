@@ -633,7 +633,7 @@ confirm() {
   local text=$1
   local c=''
   while [[ "$c" != "n" ]] && [[ "$c" != "y" ]]; do
-    echo -n "${text} [y/n]: "
+    echo -e -n "${text} [y/n]: "
     read c
   done
   
@@ -788,7 +788,7 @@ shrinkLastPartition() #EXPFUN [device/image] [tail size]
   local blockSizeB=$(getBlockSize $gLoDevice)
   local minSizeBk=$(estimateBlocksAfterShrink $gLoDevice)
 
-  if [ -z "$minSizeBk" ] && confirm "Cannot estimate number of block after shrinking the last partition. Do you want to run fsck on ${image}?"; then
+  if [ -z "$minSizeBk" ] && confirm "Cannot estimate the number of blocks after shrinking the last partition.\nDo you want to run fsck on ${image}?"; then
     execCmd "e2fsck -y -f $gLoDevice ||:"
     minSizeBk=$(estimateBlocksAfterShrink $gLoDevice)
     fsckDone=true
