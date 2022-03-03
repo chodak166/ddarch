@@ -506,7 +506,7 @@ verifyPartitions()
     local offsetBytes=$(($sectorSize * $offset))
     gLoDevice=$(losetup -f)
     execCmd losetup --offset $offsetBytes $gLoDevice $output
-    if fsck -t ext2,ext3,ext4,vfat -y $gLoDevice; then
+    if execCmd fsck -t ext2,ext3,ext4,vfat -y $gLoDevice; then
       ilog "${GREEN}Partition verified${NC}"
     else
       elog "Partition starting at sector $offset cannot be positively verified"
