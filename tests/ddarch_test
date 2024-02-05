@@ -6,8 +6,8 @@
 # Run all tests:
 # ddarch_test
 
-set -e 
-#set -x && PS4='- Line ${LINENO}: '
+set -e
+# set -x && PS4='- Line ${LINENO}: '
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 DDARCH_PATH=$(readlink -e "${DIR}/../ddarch")
@@ -23,11 +23,11 @@ cd "$DIR"
 test_lastPartitionOffset()
 {
   setupTestFiles
-  
+
   local offset=$(getLastPartitionOffset $TEST_MBR_PRI_IMAGE)
   assertEqual $offset 6144 \
     "The ${TEST_MBR_PRI_IMAGE}.img last partition offset should be 6144"
-    
+
   offset=$(getLastPartitionOffset $TEST_GPT_PRI_IMAGE)
   assertEqual $offset 6144 \
     "The ${TEST_GPT_PRI_IMAGE}.img last partition offset should be 6144"
@@ -36,52 +36,107 @@ test_lastPartitionOffset()
 test_lastPartitionSize()
 {
   setupTestFiles
-  
+
   local size=$(getLastPartitionSize $TEST_MBR_PRI_IMAGE)
   assertEqual $size 5242880 \
     "The ${TEST_MBR_PRI_IMAGE}.img last partition size should be 5242880"
-    
+
   local size=$(getLastPartitionSize $TEST_GPT_PRI_IMAGE)
   assertEqual $size 5242880 \
     "The ${TEST_GPT_PRI_IMAGE}.img last partition size should be 5242880"
 }
 
-test_shrinkLastPartition()
+test_shrinkLastPartitionMbr()
 {
   setupTestFiles
 
   local image=$TEST_MBR_PRI_IMAGE
   local imageBak=${TEST_MBR_PRI_IMAGE}.orig
   cp "$image" "$imageBak"
-  
+
   local tailSize=0
   local sizeBefore=$(getLastPartitionSize $image)
   shrinkLastPartition $image $tailSize
   local sizeAfter=$(getLastPartitionSize $image)
-  
+
   assertGreater $sizeBefore $sizeAfter \
     "The ${TEST_MBR_PRI_IMAGE}.img last partition size should be smaller after shrinking"
-    
+
   cp -f "$imageBak" "$image"
   local tailSize=$((1024 * 32))
   shrinkLastPartition $image $tailSize
   sizeAfterWithTail=$(getLastPartitionSize $image)
-  
+
   local delta=$(($sizeAfterWithTail - $sizeAfter))
   assertEqual $tailSize $delta \
     "The ${TEST_MBR_PRI_IMAGE}.img last partition size with tail should be accordingly bigger"
-    
-    
+
+  #TODO: assert test file hash hasn't changed
+}
+
+test_shrinkLastPartitionGpt()
+{
+  setupTestFiles
+
   local image=$TEST_GPT_PRI_IMAGE
+  local imageBak=${TEST_GPT_PRI_IMAGE}.orig
+  cp "$image" "$imageBak"
+
   local tailSize=0
   local sizeBefore=$(getLastPartitionSize $image)
   shrinkLastPartition $image $tailSize
   local sizeAfter=$(getLastPartitionSize $image)
-  
+
   assertGreater $sizeBefore $sizeAfter \
     "The ${TEST_GPT_PRI_IMAGE}.img last partition size should be smaller after shrinking"
-    
-  #TODO: assert test file hash hasn't changed
+
+  cp -f "$imageBak" "$image"
+  local tailSize=$((1024 * 32))
+  shrinkLastPartition $image $tailSize
+  sizeAfterWithTail=$(getLastPartitionSize $image)
+
+  local delta=$(($sizeAfterWithTail - $sizeAfter))
+  assertEqual $tailSize $delta \
+    "The ${TEST_GPT_PRI_IMAGE}.img last partition size with tail should be accordingly bigger"
+}
+
+test_shrinkLastPartitionGptUnordered()
+{
+  setupTestFiles
+
+  local image=$TEST_GPT_BOOT_IMAGE
+  local imageBak=${TEST_GPT_BOOT_IMAGE}.orig
+  cp "$image" "$imageBak"
+
+  local tailSize=0
+  local sizeBefore=$(getLastPartitionSize $image)
+  shrinkLastPartition $image $tailSize
+  local sizeAfter=$(getLastPartitionSize $image)
+
+  assertGreater $sizeBefore $sizeAfter \
+    "The ${TEST_GPT_BOOT_IMAGE}.img last partition size should be smaller after shrinking"
+
+  echo "Checking the last partition size with tail (size with no tail: $sizeAfter)"
+
+  cp -f "$imageBak" "$image"
+  local tailSize=$((1024*32))
+  shrinkLastPartition $image $tailSize
+  sizeAfterWithTail=$(getLastPartitionSize $image)
+
+  local delta=$(($sizeAfterWithTail - $sizeAfter))
+  assertEqual $tailSize $delta \
+    "The ${TEST_GPT_BOOT_IMAGE}.img last partition size with tail should be accordingly bigger"
+}
+
+test_getEndSectorGptUnordered()
+{
+  setupTestFiles
+
+  local image=$TEST_GPT_BOOT_IMAGE
+
+  local endSector=$(getEndSector $image)
+  assertEqual $endSector 16383 \
+    "The end sector of ${TEST_GPT_BOOT_IMAGE}.img should be equal to the last partition end sector"
 }
 
 #TODO: write sensible assertions
@@ -111,14 +166,14 @@ testTruncate()
   local imgSizeBefore=$(stat --printf="%s" $image)
   truncateImage $image 0
   local imgSizeAfter=$(stat --printf="%s" $image)
-  
+
   assertGreater $imgSizeBefore $imgSizeAfter "The size of the image after truncation should be smaller than before"
-  
-  local sectorSize=$(getSectorSize $image) 
+
+  local sectorSize=$(getSectorSize $image)
   mount -o offset=$(($TEST_P2_OFFSET * $sectorSize)) $image $TEST_MNT_DIR
   local mountedTestFileHash=$(md5sum $TEST_MNT_DIR/$TEST_BIN_FILENAME | awk '{print $1}')
   umount $TEST_MNT_DIR
-  
+
   assertEqual $TEST_BIN_FILE_HASH $mountedTestFileHash "Original test file hash and the one from the image should be the same"
 }
 
@@ -137,14 +192,14 @@ testRestore()
   setupTestFiles
 
   local srcImage=$1
-  
+
   local loDevice=$(losetup --show -f $TEST_RESTORED_IMAGE) && \
   restoreImage $srcImage $loDevice
-  
+
   losetup -d $loDevice
-  
+
   local size=$(getLastPartitionSize $TEST_RESTORED_IMAGE)
-  
+
   assertEqual $size 58769408 "Restored partition size should be 58769408"
 }
 
@@ -158,12 +213,12 @@ test_cliArchiveMinimalMbr()
   pushd $TEST_TMP_DIR >/dev/null
   "$DDARCH_PATH" --yes --input $inputAbsolutePath --quiet
   popd >/dev/null
-  
+
   local output=$TEST_TMP_DIR/$(date +%Y-%m-%d)-image.img.7z
   local mimeType=$(getMimeType $output)
   local inputSize=$(stat --printf="%s" $TEST_MBR_PRI_IMAGE)
   local outputSize=$(stat --printf="%s" $output)
-  
+
   assertEqual $mimeType "application/x-7z-compressed" "Archived output MIME type should be application/x-7z-compressed"
   assertGreater $inputSize $outputSize "The input size should be greater than the output size"
 }
@@ -172,16 +227,16 @@ test_cliArchiveExplicitOutputZip()
 {
   setupTestFiles
   local output=$TEST_TMP_DIR/gpt_pri_out.zip
-  
+
   "$DDARCH_PATH" archive --yes --input $TEST_GPT_PRI_IMAGE \
     --output $output \
     --arch-type zip \
     --quiet
-    
+
   local mimeType=$(getMimeType $output)
   local inputSize=$(stat --printf="%s" $TEST_MBR_PRI_IMAGE)
   local outputSize=$(stat --printf="%s" $output)
-  
+
   assertEqual $mimeType "application/zip" "Archived output MIME type should be application/zip"
   assertGreater $inputSize $outputSize "The input size should be greater than the output size"
 }
@@ -191,15 +246,15 @@ test_cliArchiveEmptyWorkDir()
   setupTestFiles
   local output=$TEST_TMP_DIR/gpt_pri_out.img
   local workDir=$TEST_TMP_DIR/empty_work_dir
-  
+
   "$DDARCH_PATH" archive --yes --input $TEST_GPT_PRI_IMAGE \
     --output $output \
     --arch-type none \
     --work-dir $workDir \
     --quiet
-    
+
   test -d $workDir && wdExists=true || wdExists=false
-  
+
   assertEqual $wdExists false "Work directory should be deleted if empty"
 }
 
@@ -211,33 +266,33 @@ test_cliArchiveNonEmptyWorkDir()
   local foreignFile=$workDir/pre_existing_file.dat
   mkdir -p $workDir
   touch $foreignFile
-  
+
   "$DDARCH_PATH" archive --yes --input $TEST_GPT_PRI_IMAGE \
     --output $output \
     --arch-type none \
     --work-dir $workDir \
     --quiet
-    
+
   test -f $foreignFile && ffExists=true || ffExists=false
-  
+
   assertEqual $ffExists true "Work directory should not be deleted and foreign file should be spared"
 }
 
 test_cliArchiveMbrDevice()
 {
   setupTestFiles
-  
+
   output=$TEST_TMP_DIR/mbrdevice.img
   loDevice=$(losetup --show -f $TEST_MBR_PRI_IMAGE)
-  
+
   "$DDARCH_PATH" archive --yes --input $loDevice -a none --output $output --quiet
-  
+
   losetup -d $loDevice
-    
+
   local mimeType=$(getMimeType $output)
   local inputSize=$(stat --printf="%s" $TEST_MBR_PRI_IMAGE)
   local outputSize=$(stat --printf="%s" $output)
-  
+
   assertEqual $mimeType "application/octet-stream" "Output MIME type should be application/octet-stream"
   assertGreater $inputSize $outputSize "The input size should be greater than the output size"
 }
@@ -247,19 +302,19 @@ test_cliArchiveInPlaceNoCompressNoOutput()
   setupTestFiles
   local input=$TEST_GPT_PRI_IMAGE
   local output=$TEST_TMP_DIR/gpt_pri_out_inplace.img
-  
+
   local inputSizeBefore=$(stat --printf="%s" $input)
-  
-  
+
+
   "$DDARCH_PATH" archive --yes --input $input \
     --output $output \
     --arch-type none \
     --in-place \
     --quiet
-    
+
   local inputSizeAfter=$(stat --printf="%s" $input)
   test -f $output && local outExists=true || local outExists=false
-  
+
   assertGreater $inputSizeBefore $inputSizeAfter "The input size should decrease if the '--in-place' flag was used"
   assertEqual $outExists false "No output file should be present if the '--in-place' flag was used"
 }
@@ -269,18 +324,18 @@ test_cliArchiveInPlaceTarGzOutput()
   setupTestFiles
   local input=$TEST_GPT_PRI_IMAGE
   local output=$TEST_TMP_DIR/gpt_pri_out_inplace.tar.gz
-  
+
   local inputSizeBefore=$(stat --printf="%s" $input)
-  
+
   "$DDARCH_PATH" archive --yes --input $input \
     --output $output \
     --arch-type tgz \
     --in-place \
     --quiet
-    
+
   test -f $input && local inExists=true || local inExists=false
   local mimeType=$(getMimeType $output)
-  
+
   assertEqual $inExists false "Input file should be deleted if the '--in-place' flag was used"
   assertEqual $mimeType "application/gzip" "The output file MIME type should be application/gzip"
 }
@@ -290,16 +345,16 @@ test_cliArchiveCorruptedMbr()
   setupTestFiles
   local inputAbsolutePath=$(readlink -e $TEST_MBR_PRI_IMAGE)
   corruptLastPartition $TEST_MBR_PRI_IMAGE
-  
+
   pushd $TEST_TMP_DIR >/dev/null
   "$DDARCH_PATH" --yes --input $inputAbsolutePath --yes --quiet
   popd >/dev/null
-  
+
   local output=$TEST_TMP_DIR/$(date +%Y-%m-%d)-image.img.7z
   local mimeType=$(getMimeType $output)
   local inputSize=$(stat --printf="%s" $TEST_MBR_PRI_IMAGE)
   local outputSize=$(stat --printf="%s" $output)
-  
+
   assertEqual $mimeType "application/x-7z-compressed" "Archived output MIME type should be application/x-7z-compressed"
   assertGreater $inputSize $outputSize "The input size should be greater than the output size"
 }
@@ -310,19 +365,19 @@ test_cliArchiveGptInPlaceDeviceSkipUnpart()
   local input=$TEST_GPT_PRI_IMAGE
   local device=$(losetup --show -f "$input")
   local output=$TEST_TMP_DIR/gpt_pri_out_inplace.7z
-  
+
   local inputSizeBefore=$(stat --printf="%s" $input)
-  
+
   "$DDARCH_PATH" archive --yes --input $device \
     --output $output \
     --arch-type 7z \
     --in-place \
     --skip-unpart \
     --quiet
-    
+
   losetup -d $device
   local mimeType=$(getMimeType $output)
-  
+
   assertEqual $mimeType "application/x-7z-compressed" "The output file MIME type should be application/x-7z-compressed"
 }
 
@@ -332,19 +387,19 @@ test_cliArchiveMbrInPlaceDeviceSkipUnpart()
   local input=$TEST_MBR_PRI_IMAGE
   local device=$(losetup --show -f "$input")
   local output=$TEST_TMP_DIR/gpt_pri_out_inplace.7z
-  
+
   local inputSizeBefore=$(stat --printf="%s" $input)
-  
+
   "$DDARCH_PATH" archive --yes --input $device \
     --output $output \
     --arch-type 7z \
     --in-place \
     --skip-unpart \
     --quiet
-    
+
   losetup -d $device
   local mimeType=$(getMimeType $output)
-  
+
   assertEqual $mimeType "application/x-7z-compressed" "The output file MIME type should be application/x-7z-compressed"
 }
 
@@ -353,17 +408,17 @@ test_cliRestoreMbrImage()
   setupTestFiles
   local input=$TEST_MBR_PRI_IMAGE
   local loDevice=$(losetup --show -f $TEST_RESTORED_IMAGE)
-  
+
   "$DDARCH_PATH" restore --input $input \
     --output $loDevice \
     --quiet \
     || losetup -d $loDevice
-        
-  
+
+
   local inputPartitions=$(getLastPartitionNumber $input)
   local devPartitions=$(getLastPartitionNumber $loDevice)
   losetup -d $loDevice
-  
+
   assertEqual $inputPartitions $devPartitions "The output device should contain the same number of partitions as input device after restoration"
 }
 
@@ -373,18 +428,18 @@ test_cliRestoreMbr7z()
   local input=$TEST_MBR_PRI_IMAGE
   local archiveFile=${input}.7z
   local loDevice=$(losetup --show -f $TEST_RESTORED_IMAGE)
-  
+
   7z a $archiveFile $input >/dev/null
-  
+
   "$DDARCH_PATH" restore --input $archiveFile \
     --output $loDevice \
     --quiet \
     || losetup -d $loDevice
-        
+
   local inputPartitions=$(getLastPartitionNumber $input)
   local devPartitions=$(getLastPartitionNumber $loDevice)
   losetup -d $loDevice
-  
+
   assertEqual $inputPartitions $devPartitions "The output device should contain the same number of partitions as input device after 7z restoration"
 }
 
@@ -394,18 +449,18 @@ test_cliRestoreMbrZip()
   local input=$TEST_MBR_PRI_IMAGE
   local archiveFile=${input}.zip
   local loDevice=$(losetup --show -f $TEST_RESTORED_IMAGE)
-  
+
   zip $archiveFile $input >/dev/null
-  
+
   "$DDARCH_PATH" restore --input $archiveFile \
     --output $loDevice \
     --quiet \
     || losetup -d $loDevice
-        
+
   local inputPartitions=$(getLastPartitionNumber $input)
   local devPartitions=$(getLastPartitionNumber $loDevice)
   losetup -d $loDevice
-  
+
   assertEqual $inputPartitions $devPartitions "The output device should contain the same number of partitions as input device after ZIP restoration"
 }
 
@@ -415,18 +470,18 @@ test_cliRestoreMbrTgz()
   local input=$TEST_MBR_PRI_IMAGE
   local archiveFile=${input}.tar.gz
   local loDevice=$(losetup --show -f $TEST_RESTORED_IMAGE)
-  
+
   tar -zcf $archiveFile $input >/dev/null
-  
+
   "$DDARCH_PATH" restore --input $archiveFile \
     --output $loDevice \
     --quiet \
     || losetup -d $loDevice
-        
+
   local inputPartitions=$(getLastPartitionNumber $input)
   local devPartitions=$(getLastPartitionNumber $loDevice)
   losetup -d $loDevice
-  
+
   assertEqual $inputPartitions $devPartitions "The output device should contain the same number of partitions as input device after tar.gz restoration"
 }
 

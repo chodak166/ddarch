@@ -11,6 +11,7 @@ TEST_BASE_IMG_SIZE=10M
 TEST_MBR_PRI_IMAGE=$TEST_TMP_DIR/disk-10M-mbr-primary.img
 TEST_MBR_EXT_IMAGE=$TEST_TMP_DIR/disk-10M-mbr-extended.img
 TEST_GPT_PRI_IMAGE=$TEST_TMP_DIR/disk-10M-gpt-primary.img
+TEST_GPT_BOOT_IMAGE=$TEST_TMP_DIR/disk-10M-gpt-boot.img
 TEST_RESTORED_IMAGE=$TEST_TMP_DIR/restored-image.img
 
 TEST_RESTORED_IMAGE_SIZE=60MiB
@@ -24,7 +25,7 @@ setupTestFiles()
     echo "${RED}$TEST_MNT_DIR already mounted, aborting${NC}"
     exit 1
   fi
-  
+
   mkdir -p "$TEST_TMP_DIR" ||:
   mkdir -p "$TEST_MNT_DIR" ||:
 
@@ -34,27 +35,28 @@ setupTestFiles()
     head -c 1M /dev/urandom > $TEST_BIN_FILE
     createMbrPriTestImage $TEST_MBR_PRI_IMAGE
     formatAndPlaceTestFile $TEST_MBR_PRI_IMAGE
-    
+
     createGptPriTestImage $TEST_GPT_PRI_IMAGE
     formatAndPlaceTestFile $TEST_GPT_PRI_IMAGE
-    
+    createGptBootTestImage $TEST_GPT_BOOT_IMAGE
+
     createMbrExtTestImage $TEST_MBR_EXT_IMAGE
-    
+
     head -c $TEST_RESTORED_IMAGE_SIZE /dev/urandom > $TEST_RESTORED_IMAGE
 
     cp -af "$TEST_TMP_DIR" "$TEST_TMP_CACHE_DIR"
   fi
-  
+
   TEST_BIN_FILE_HASH=$(md5sum $TEST_BIN_FILE | awk '{print $1}')
 }
 
 cleanUp()
 {
   retCode=$?
-  
+
   mountpoint -q "$TEST_MNT_DIR" && umount -f "$TEST_MNT_DIR"
   rm -r "$TEST_TMP_DIR" "$TEST_TMP_CACHE_DIR" "$TEST_MNT_DIR" ||:
-  
+
   if [ $retCode -eq 0 ]; then
     echo -e "${GREEN}Done!${NC}"
   else
@@ -66,7 +68,7 @@ createMbrPriTestImage()
 {
   local imgFile="$1"
   head -c $TEST_BASE_IMG_SIZE /dev/urandom > "$imgFile"
-  
+
   parted --script "$imgFile" mktable msdos
   parted -a optimal --script "$imgFile" mkpart primary ext4 1MiB 3MiB
   parted -a optimal --script "$imgFile" mkpart primary ext4 3MiB 8MiB
@@ -76,7 +78,7 @@ createMbrExtTestImage()
 {
   local imgFile="$1"
   head -c $TEST_BASE_IMG_SIZE /dev/urandom > "$imgFile"
-  
+
   parted --script "$imgFile" mktable msdos
   parted -a optimal --script "$imgFile" mkpart primary ext4 1MiB 3MiB
   parted -a optimal --script "$imgFile" mkpart extended 3MiB 8MiB
@@ -87,11 +89,38 @@ createGptPriTestImage()
 {
   local imgFile="$1"
   head -c $TEST_BASE_IMG_SIZE /dev/urandom > "$imgFile"
-  
+
   parted --script "$imgFile" mktable gpt
   parted -a optimal --script "$imgFile" mkpart primary ext4 1MiB 3MiB
   parted -a optimal --script "$imgFile" mkpart primary ext4 3MiB 8MiB
 }
+
+createGptBootTestImage()
+{
+  local imgFile="$1"
+  head -c $TEST_BASE_IMG_SIZE /dev/urandom > "$imgFile"
+
+  # Creating the GPT partition table
+  parted --script "$imgFile" mktable gpt
+
+  # Creating a Linux filesystem partition (as the first partition)
+  parted -a optimal --script "$imgFile" mkpart primary 5MiB 8MiB
+
+  # Creating a BIOS boot partition
+  parted -a optimal --script "$imgFile" mkpart primary 1MiB 2MiB
+  parted --script "$imgFile" set 2 bios_grub on
+
+  # Creating an EFI System partition
+  parted -a optimal --script "$imgFile" mkpart primary fat32 2MiB 4MiB
+  parted --script "$imgFile" set 3 esp on
+
+  # Format system partition:
+  local loDevice=$(losetup -f)
+  losetup -o 5MiB --partscan $loDevice "$imgFile"
+  mke2fs -t ext4 $loDevice
+  losetup -d $loDevice
+}
+
 
 formatAndPlaceTestFile()
 {
@@ -100,9 +129,9 @@ formatAndPlaceTestFile()
   losetup -o 1MiB --partscan --sizelimit 2MiB $loDevice "$imgFile"
   mke2fs -t ext4 $loDevice
   losetup -d $loDevice
-  
+
   fdisk -lu "$imgFile"
-  
+
   losetup -o 3MiB --partscan --sizelimit 5MiB $loDevice "$imgFile"
   mke2fs -t ext4 $loDevice
   mount $loDevice $TEST_MNT_DIR
@@ -110,7 +139,7 @@ formatAndPlaceTestFile()
   sync
   umount $TEST_MNT_DIR
   losetup -d $loDevice
-  
+
   fdisk -lu "$imgFile"
 }
 
@@ -119,12 +148,12 @@ corruptLastPartition()
   local imgFile="$1"
   local offset=$(sfdisk -l "$imgFile" -o Start | tail -n 1)
   local loDevice=$(losetup -f --show --offset $((512*$offset)) "$imgFile")
-  
+
   debugfs -w  -R 'write /dev/null bad_file' $loDevice
   debugfs -w  -R 'clri bad_file' $loDevice
   mount $loDevice $TEST_MNT_DIR
   ls -sF $TEST_MNT_DIR 2>/dev/null ||:
-  
+
   umount $TEST_MNT_DIR
   losetup -d $loDevice
 }
